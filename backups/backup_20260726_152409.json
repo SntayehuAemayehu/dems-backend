@@ -1,0 +1,847 @@
+{
+  "timestamp": "2026-07-26T15:24:09.048621+00:00",
+  "users": [
+    {
+      "id": 1,
+      "email": "yinebeb@gmail.com",
+      "full_name": "yinebeb",
+      "role": "ADMIN",
+      "is_active": true
+    },
+    {
+      "id": 2,
+      "email": "sntualex@gmail.com",
+      "full_name": "sntayehu alemayehu",
+      "role": "STUDENT",
+      "is_active": true
+    },
+    {
+      "id": 3,
+      "email": "taye@gmail.com",
+      "full_name": "taye",
+      "role": "TEACHER",
+      "is_active": true
+    },
+    {
+      "id": 4,
+      "email": "admin@gmail.com",
+      "full_name": "sntu",
+      "role": "ADMIN",
+      "is_active": true
+    },
+    {
+      "id": 5,
+      "email": "ela@gmail.com",
+      "full_name": "Eliyas Kindieee",
+      "role": "STUDENT",
+      "is_active": true
+    },
+    {
+      "id": 6,
+      "email": "demeke@gmail.com",
+      "full_name": "demeke",
+      "role": "DEPT_HEAD",
+      "is_active": true
+    },
+    {
+      "id": 7,
+      "email": "abebaw@gmail.com",
+      "full_name": "abebaw",
+      "role": "TEACHER",
+      "is_active": true
+    },
+    {
+      "id": 8,
+      "email": "tigabie@gmail.com",
+      "full_name": "tigabie",
+      "role": "REGISTRAR",
+      "is_active": true
+    },
+    {
+      "id": 9,
+      "email": "finance@gmail.com",
+      "full_name": "Finance",
+      "role": "FINANCE",
+      "is_active": true
+    },
+    {
+      "id": 10,
+      "email": "data@gmail.com",
+      "full_name": "birhanu abegaz",
+      "role": "TEACHER",
+      "is_active": true
+    },
+    {
+      "id": 11,
+      "email": "sntualexandra@gmail.com",
+      "full_name": "sntayehu alemayehu",
+      "role": "STUDENT",
+      "is_active": true
+    },
+    {
+      "id": 12,
+      "email": "getie@gmail.com",
+      "full_name": "Getie",
+      "role": "TEACHER",
+      "is_active": true
+    },
+    {
+      "id": 13,
+      "email": "registrar@gmail.com",
+      "full_name": "Registrar",
+      "role": "REGISTRAR",
+      "is_active": true
+    },
+    {
+      "id": 14,
+      "email": "financeee@gmail.com",
+      "full_name": "Finance",
+      "role": "FINANCE",
+      "is_active": true
+    },
+    {
+      "id": 15,
+      "email": "desti@gmail.com",
+      "full_name": "desti",
+      "role": "TEACHER",
+      "is_active": true
+    },
+    {
+      "id": 16,
+      "email": "demekeour@gmail.com",
+      "full_name": "demekelastdept",
+      "role": "DEPT_HEAD",
+      "is_active": true
+    },
+    {
+      "id": 17,
+      "email": "tadele@gmail.com",
+      "full_name": "Tadele dele",
+      "role": "STUDENT",
+      "is_active": true
+    },
+    {
+      "id": 18,
+      "email": "degfie@gmail.com",
+      "full_name": "degfie",
+      "role": "DEPT_HEAD",
+      "is_active": true
+    },
+    {
+      "id": 19,
+      "email": "financetest@gmail.com",
+      "full_name": "financefinance",
+      "role": "FINANCE",
+      "is_active": true
+    },
+    {
+      "id": 20,
+      "email": "head@gmail.com",
+      "full_name": "head",
+      "role": "DEPT_HEAD",
+      "is_active": true
+    },
+    {
+      "id": 21,
+      "email": "Adminstrator@gmail.com",
+      "full_name": "Adminstrator",
+      "role": "ADMIN",
+      "is_active": true
+    },
+    {
+      "id": 22,
+      "email": "geoteacher@gmail.com",
+      "full_name": "Geology teacher",
+      "role": "TEACHER",
+      "is_active": true
+    },
+    {
+      "id": 23,
+      "email": "mastie@gmail.com",
+      "full_name": "Matieeeee",
+      "role": "STUDENT",
+      "is_active": true
+    },
+    {
+      "id": 24,
+      "email": "yosef@gmail.com",
+      "full_name": "YOSEF TESHOME",
+      "role": "STUDENT",
+      "is_active": true
+    },
+    {
+      "id": 25,
+      "email": "itinstractor@gmail.com",
+      "full_name": "IT INSTRACTOR",
+      "role": "TEACHER",
+      "is_active": true
+    },
+    {
+      "id": 26,
+      "email": "kebacorrect@gmail.com",
+      "full_name": "KEBAD HEAD",
+      "role": "DEPT_HEAD",
+      "is_active": true
+    },
+    {
+      "id": 27,
+      "email": "nigus@gmaiil.com",
+      "full_name": "nigus",
+      "role": "STUDENT",
+      "is_active": true
+    },
+    {
+      "id": 28,
+      "email": "dd@gmail.com",
+      "full_name": "sdd",
+      "role": "REGISTRAR",
+      "is_active": true
+    },
+    {
+      "id": 29,
+      "email": "elaaa@gmail.com",
+      "full_name": "Elias kindie",
+      "role": "STUDENT",
+      "is_active": true
+    },
+    {
+      "id": 30,
+      "email": "addisu@gmail.com",
+      "full_name": "addisu",
+      "role": "TEACHER",
+      "is_active": true
+    },
+    {
+      "id": 31,
+      "email": "demekedepartmentheadofsoft@gmail.com",
+      "full_name": "demekedepartmentheadofsoft",
+      "role": "DEPT_HEAD",
+      "is_active": true
+    },
+    {
+      "id": 32,
+      "email": "tigaburegistrar@gmail.com",
+      "full_name": "tigaburegistrar",
+      "role": "REGISTRAR",
+      "is_active": true
+    },
+    {
+      "id": 33,
+      "email": "officeoffinance@gmail.com",
+      "full_name": "office of finance",
+      "role": "FINANCE",
+      "is_active": true
+    },
+    {
+      "id": 34,
+      "email": "yordi@gmail.com",
+      "full_name": "yordanos shewa",
+      "role": "STUDENT",
+      "is_active": true
+    },
+    {
+      "id": 35,
+      "email": "getabalew@gmail.com",
+      "full_name": "getabalew",
+      "role": "TEACHER",
+      "is_active": true
+    },
+    {
+      "id": 36,
+      "email": "brhie@gmail.com",
+      "full_name": "BIRHANU ABEGAZ",
+      "role": "DEPT_HEAD",
+      "is_active": true
+    },
+    {
+      "id": 37,
+      "email": "financelast@gmail.com",
+      "full_name": "finance",
+      "role": "FINANCE",
+      "is_active": true
+    },
+    {
+      "id": 38,
+      "email": "registrarlast@gmail.com",
+      "full_name": "registrar",
+      "role": "REGISTRAR",
+      "is_active": true
+    },
+    {
+      "id": 39,
+      "email": "birhanulast@gmail.com",
+      "full_name": "birhanu abegaz",
+      "role": "DEPT_HEAD",
+      "is_active": true
+    },
+    {
+      "id": 40,
+      "email": "systemadmin@gmail.com",
+      "full_name": "system admin",
+      "role": "ADMIN",
+      "is_active": true
+    },
+    {
+      "id": 41,
+      "email": "saka@gmail.com",
+      "full_name": "ddddddddddddddd",
+      "role": "STUDENT",
+      "is_active": true
+    },
+    {
+      "id": 42,
+      "email": "sntie@gmail.com",
+      "full_name": "sntayehu alemayehu yismaw",
+      "role": "STUDENT",
+      "is_active": true
+    },
+    {
+      "id": 43,
+      "email": "yibe@gmail.com",
+      "full_name": "yibeltal gashaw",
+      "role": "TEACHER",
+      "is_active": true
+    },
+    {
+      "id": 44,
+      "email": "demekehead@gmail.com",
+      "full_name": "demeke molla",
+      "role": "DEPT_HEAD",
+      "is_active": true
+    },
+    {
+      "id": 45,
+      "email": "menbere@gmail.com",
+      "full_name": "menbere",
+      "role": "REGISTRAR",
+      "is_active": true
+    },
+    {
+      "id": 46,
+      "email": "financial@gmail.com",
+      "full_name": "financiall",
+      "role": "FINANCE",
+      "is_active": true
+    },
+    {
+      "id": 47,
+      "email": "nigus2710@gmail.com",
+      "full_name": "NIGUSU AYZOHBELEGN WUBIE",
+      "role": "STUDENT",
+      "is_active": true
+    },
+    {
+      "id": 48,
+      "email": "tropical@gmail.com",
+      "full_name": "TROPICAL COLLEGE OF MEDICINE",
+      "role": "DEPT_HEAD",
+      "is_active": true
+    },
+    {
+      "id": 49,
+      "email": "teachermanagment@gmail.com",
+      "full_name": "Managment Teacher",
+      "role": "TEACHER",
+      "is_active": true
+    },
+    {
+      "id": 50,
+      "email": "manaye@gmail.com",
+      "full_name": "MANAYE MOSSIEEE",
+      "role": "REGISTRAR",
+      "is_active": true
+    },
+    {
+      "id": 51,
+      "email": "tropicalfinance@gmail.com",
+      "full_name": "TROPICAL FINANCE",
+      "role": "FINANCE",
+      "is_active": true
+    },
+    {
+      "id": 52,
+      "email": "mintesnot@gmail.com",
+      "full_name": "mintesnot",
+      "role": "STUDENT",
+      "is_active": true
+    },
+    {
+      "id": 53,
+      "email": "yehuana@gmail.com",
+      "full_name": "yehuana",
+      "role": "STUDENT",
+      "is_active": true
+    },
+    {
+      "id": 54,
+      "email": "fasil@gmail.com",
+      "full_name": "fasil",
+      "role": "STUDENT",
+      "is_active": true
+    }
+  ],
+  "courses": [
+    {
+      "id": 27,
+      "course_code": "PANTIOLOGY",
+      "title": "pant66"
+    },
+    {
+      "id": 26,
+      "course_code": "PRINCIPLE0002",
+      "title": "principle of accounting"
+    },
+    {
+      "id": 25,
+      "course_code": "FFFFFFF",
+      "title": "ffffffff"
+    },
+    {
+      "id": 24,
+      "course_code": "666666666",
+      "title": "8888888888"
+    },
+    {
+      "id": 23,
+      "course_code": "FUNDAMENTAL",
+      "title": "FUN"
+    },
+    {
+      "id": 22,
+      "course_code": "geotad",
+      "title": "geot"
+    },
+    {
+      "id": 21,
+      "course_code": "PRACICAL GEOLOGY",
+      "title": "PRACT002"
+    },
+    {
+      "id": 20,
+      "course_code": "MAD",
+      "title": "MAD"
+    },
+    {
+      "id": 19,
+      "course_code": "AI",
+      "title": "artificial"
+    },
+    {
+      "id": 18,
+      "course_code": "PROOO1",
+      "title": "Programming"
+    },
+    {
+      "id": 17,
+      "course_code": "DDDDDDDDDD",
+      "title": "ddddddddddd"
+    },
+    {
+      "id": 16,
+      "course_code": "BBBBBBB",
+      "title": "333333"
+    },
+    {
+      "id": 15,
+      "course_code": "IS001",
+      "title": "SAD"
+    },
+    {
+      "id": 14,
+      "course_code": "DDDDD",
+      "title": "dddddddddd"
+    },
+    {
+      "id": 13,
+      "course_code": "CCCC",
+      "title": "bbbbbbb"
+    },
+    {
+      "id": 12,
+      "course_code": "CS101",
+      "title": "Introduction to Computer Science"
+    },
+    {
+      "id": 11,
+      "course_code": "GEOCHEMSTRY",
+      "title": "GEC002"
+    },
+    {
+      "id": 10,
+      "course_code": "COCO001",
+      "title": "C#"
+    },
+    {
+      "id": 9,
+      "course_code": "\u134d\u134d\u134d\u134d\u134d\u134d\u134d\u134d",
+      "title": "nnnnnnn"
+    },
+    {
+      "id": 8,
+      "course_code": "DATA009",
+      "title": "daaaaaaaaaaa"
+    },
+    {
+      "id": 7,
+      "course_code": "CE002",
+      "title": "CE"
+    },
+    {
+      "id": 6,
+      "course_code": "database",
+      "title": "database"
+    },
+    {
+      "id": 5,
+      "course_code": "WWWWWW",
+      "title": "wwwwwwwww"
+    },
+    {
+      "id": 4,
+      "course_code": "OP001",
+      "title": "operating"
+    },
+    {
+      "id": 3,
+      "course_code": "SSSSSS",
+      "title": "dddddddd"
+    },
+    {
+      "id": 2,
+      "course_code": "SA003",
+      "title": "SYSTEM ADMINSTRATION"
+    },
+    {
+      "id": 1,
+      "course_code": "OOP001",
+      "title": "OOB"
+    }
+  ],
+  "enrollments": [
+    {
+      "id": 19,
+      "student_id": 8,
+      "course_id": 13,
+      "status": "ACTIVE"
+    },
+    {
+      "id": 20,
+      "student_id": 8,
+      "course_id": 26,
+      "status": "ACTIVE"
+    },
+    {
+      "id": 21,
+      "student_id": 8,
+      "course_id": 18,
+      "status": "ACTIVE"
+    },
+    {
+      "id": 22,
+      "student_id": 8,
+      "course_id": 7,
+      "status": "ACTIVE"
+    },
+    {
+      "id": 23,
+      "student_id": 15,
+      "course_id": 24,
+      "status": "ACTIVE"
+    },
+    {
+      "id": 17,
+      "student_id": 8,
+      "course_id": 24,
+      "status": "ACTIVE"
+    },
+    {
+      "id": 18,
+      "student_id": 8,
+      "course_id": 20,
+      "status": "ACTIVE"
+    },
+    {
+      "id": 16,
+      "student_id": 18,
+      "course_id": 26,
+      "status": "ACTIVE"
+    },
+    {
+      "id": 8,
+      "student_id": 1,
+      "course_id": 19,
+      "status": "ACTIVE"
+    },
+    {
+      "id": 9,
+      "student_id": 15,
+      "course_id": 19,
+      "status": "ACTIVE"
+    },
+    {
+      "id": 10,
+      "student_id": 15,
+      "course_id": 16,
+      "status": "ACTIVE"
+    },
+    {
+      "id": 11,
+      "student_id": 15,
+      "course_id": 13,
+      "status": "ACTIVE"
+    },
+    {
+      "id": 12,
+      "student_id": 8,
+      "course_id": 21,
+      "status": "ACTIVE"
+    },
+    {
+      "id": 13,
+      "student_id": 8,
+      "course_id": 19,
+      "status": "ACTIVE"
+    },
+    {
+      "id": 14,
+      "student_id": 8,
+      "course_id": 22,
+      "status": "ACTIVE"
+    },
+    {
+      "id": 15,
+      "student_id": 8,
+      "course_id": 23,
+      "status": "ACTIVE"
+    },
+    {
+      "id": 6,
+      "student_id": 8,
+      "course_id": 16,
+      "status": "ACTIVE"
+    },
+    {
+      "id": 7,
+      "student_id": 8,
+      "course_id": 14,
+      "status": "ACTIVE"
+    },
+    {
+      "id": 3,
+      "student_id": 2,
+      "course_id": 12,
+      "status": "ACTIVE"
+    },
+    {
+      "id": 4,
+      "student_id": 11,
+      "course_id": 15,
+      "status": "ACTIVE"
+    },
+    {
+      "id": 5,
+      "student_id": 8,
+      "course_id": 15,
+      "status": "ACTIVE"
+    },
+    {
+      "id": 2,
+      "student_id": 8,
+      "course_id": 12,
+      "status": "ACTIVE"
+    },
+    {
+      "id": 1,
+      "student_id": 8,
+      "course_id": 11,
+      "status": "ACTIVE"
+    }
+  ],
+  "exams": [
+    {
+      "id": 1,
+      "title": "gggggg",
+      "course_id": 1
+    },
+    {
+      "id": 2,
+      "title": "dataexam",
+      "course_id": 6
+    },
+    {
+      "id": 3,
+      "title": "final exam",
+      "course_id": 11
+    },
+    {
+      "id": 4,
+      "title": "Midterm Exam",
+      "course_id": 12
+    },
+    {
+      "id": 5,
+      "title": "java",
+      "course_id": 11
+    },
+    {
+      "id": 6,
+      "title": "CNN",
+      "course_id": 15
+    },
+    {
+      "id": 7,
+      "title": "mid",
+      "course_id": 11
+    },
+    {
+      "id": 8,
+      "title": "MIDDDDDDDDDDDDDDDDD",
+      "course_id": 12
+    },
+    {
+      "id": 9,
+      "title": "Quize",
+      "course_id": 19
+    },
+    {
+      "id": 10,
+      "title": "exit",
+      "course_id": 21
+    },
+    {
+      "id": 11,
+      "title": "Geologyistttttttt",
+      "course_id": 21
+    },
+    {
+      "id": 12,
+      "title": "now",
+      "course_id": 23
+    },
+    {
+      "id": 13,
+      "title": "88888888888888",
+      "course_id": 24
+    },
+    {
+      "id": 14,
+      "title": "quize ww exam",
+      "course_id": 5
+    },
+    {
+      "id": 15,
+      "title": "now",
+      "course_id": 21
+    }
+  ],
+  "payments": [
+    {
+      "id": 1,
+      "student_id": 2,
+      "amount": "200.00",
+      "status": "VERIFIED"
+    },
+    {
+      "id": 2,
+      "student_id": 2,
+      "amount": "2000.00",
+      "status": "REJECTED"
+    },
+    {
+      "id": 3,
+      "student_id": 6,
+      "amount": "10000000.00",
+      "status": "VERIFIED"
+    },
+    {
+      "id": 4,
+      "student_id": 5,
+      "amount": "55.00",
+      "status": "VERIFIED"
+    },
+    {
+      "id": 5,
+      "student_id": 8,
+      "amount": "4000.00",
+      "status": "VERIFIED"
+    },
+    {
+      "id": 6,
+      "student_id": 8,
+      "amount": "3333333.00",
+      "status": "VERIFIED"
+    },
+    {
+      "id": 7,
+      "student_id": 13,
+      "amount": "3333333.00",
+      "status": "VERIFIED"
+    },
+    {
+      "id": 8,
+      "student_id": 8,
+      "amount": "200000.00",
+      "status": "VERIFIED"
+    },
+    {
+      "id": 9,
+      "student_id": 5,
+      "amount": "2500.00",
+      "status": "VERIFIED"
+    },
+    {
+      "id": 10,
+      "student_id": 8,
+      "amount": "333333.00",
+      "status": "VERIFIED"
+    },
+    {
+      "id": 11,
+      "student_id": 5,
+      "amount": "444.00",
+      "status": "VERIFIED"
+    },
+    {
+      "id": 12,
+      "student_id": 15,
+      "amount": "4444.00",
+      "status": "VERIFIED"
+    },
+    {
+      "id": 13,
+      "student_id": 15,
+      "amount": "555.00",
+      "status": "VERIFIED"
+    },
+    {
+      "id": 14,
+      "student_id": 18,
+      "amount": "300.00",
+      "status": "VERIFIED"
+    },
+    {
+      "id": 15,
+      "student_id": 8,
+      "amount": "1.04",
+      "status": "VERIFIED"
+    },
+    {
+      "id": 16,
+      "student_id": 15,
+      "amount": "1.02",
+      "status": "VERIFIED"
+    },
+    {
+      "id": 17,
+      "student_id": 21,
+      "amount": "888.00",
+      "status": "VERIFIED"
+    },
+    {
+      "id": 18,
+      "student_id": 23,
+      "amount": "69.00",
+      "status": "VERIFIED"
+    }
+  ]
+}
