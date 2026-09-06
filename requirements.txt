@@ -28,7 +28,7 @@ openai==1.55.0
 sentence-transformers==3.3.1
 transformers==4.46.0
 torch==2.9.0
-torchvision==0.24.0        # ← FIXED: Changed from 0.22.0 to 0.24.0
+torchvision==0.24.0
 torchaudio==2.9.0
 scikit-learn==1.6.0
 pandas==2.2.3
@@ -36,8 +36,8 @@ numpy==2.2.0
 joblib==1.4.2
 
 # Computer Vision - Python 3.14 Compatible
-opencv-python==4.10.0.84
-opencv-contrib-python==4.10.0.84
+opencv-python==4.13.0.90
+opencv-contrib-python==4.13.0.90
 mediapipe==0.10.18
 tensorflow==2.18.0
 tensorflow-hub==0.16.1
