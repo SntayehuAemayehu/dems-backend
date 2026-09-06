@@ -27,9 +27,9 @@ whitenoise==6.7.0
 openai==1.55.0
 sentence-transformers==3.3.1
 transformers==4.46.0
-torch==2.5.0
-torchvision==0.20.0
-torchaudio==2.5.0
+torch==2.9.0          # ← Updated for Python 3.14
+torchvision==0.22.0   # ← Updated for Python 3.14
+torchaudio==2.9.0     # ← Updated for Python 3.14
 scikit-learn==1.6.0
 pandas==2.2.3
 numpy==2.2.0
