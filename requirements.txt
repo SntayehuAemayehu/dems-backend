@@ -38,7 +38,7 @@ joblib==1.4.2
 # Computer Vision - Python 3.14 Compatible
 opencv-python==4.13.0.90
 opencv-contrib-python==4.13.0.90
-mediapipe==0.10.18
+mediapipe==0.10.33       # ← Updated from 0.10.18 to 0.10.33
 tensorflow==2.18.0
 tensorflow-hub==0.16.1
 scikit-image==0.24.0
