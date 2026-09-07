@@ -1,5 +1,5 @@
 # Django Core
-Django==4.2.16
+Django==5.0.6
 djangorestframework==3.15.2
 django-cors-headers==4.4.0
 djangorestframework-simplejwt==5.3.1
@@ -23,24 +23,24 @@ gunicorn==22.0.0
 uvicorn==0.34.0
 whitenoise==6.8.2
 
-# Core AI Libraries
+# Core AI Libraries - Python 3.14 Compatible
 openai==1.55.3
 sentence-transformers==3.3.1
 transformers==4.46.3
-torch==2.5.1
-torchvision==0.20.1
-torchaudio==2.5.1
-scikit-learn==1.5.2
+torch==2.9.0
+torchvision==0.24.0
+torchaudio==2.9.0
+scikit-learn==1.6.0
 pandas==2.2.3
-numpy==1.26.4
+numpy==2.2.0
 joblib==1.4.2
 
-# Computer Vision
-opencv-python==4.10.0.84
-opencv-contrib-python==4.10.0.84
-mediapipe==0.10.18
-tensorflow==2.18.0
-tensorflow-hub==0.16.1
+# Computer Vision - Python 3.14 Compatible
+opencv-python==4.13.0.90
+opencv-contrib-python==4.13.0.90
+mediapipe==0.10.33
+# tensorflow==2.18.0  # COMMENTED OUT - Not compatible with Python 3.14
+# tensorflow-hub==0.16.1  # COMMENTED OUT
 scikit-image==0.24.0
 
 # Natural Language Processing
