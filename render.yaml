@@ -2,7 +2,11 @@ services:
   - type: web
     name: dems-backend
     env: python
-    buildCommand: pip install --no-cache-dir -r requirements-render.txt && python manage.py collectstatic --noinput
+    buildCommand: |
+      apt-get update && apt-get install -y libmagic1
+      pip install --no-cache-dir -r requirements-render.txt
+      python manage.py collectstatic --noinput
+      python manage.py migrate
     startCommand: gunicorn dems_backend.wsgi:application
     envVars:
       - key: PYTHON_VERSION
