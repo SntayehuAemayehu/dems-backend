@@ -23,13 +23,14 @@ gunicorn==22.0.0
 uvicorn==0.34.0
 whitenoise==6.8.2
 
-# ESSENTIAL AI LIBRARIES (needed for code to run)
+# AI LIBRARIES (required by your code)
 numpy==2.2.0
 pandas==2.2.3
 scikit-learn==1.6.0
 joblib==1.4.2
 
-# Small AI Libraries
+# MISSING LIBRARIES - ADD THESE
+twilio==9.3.0
 openai==1.55.3
 requests==2.32.3
 beautifulsoup4==4.12.3
