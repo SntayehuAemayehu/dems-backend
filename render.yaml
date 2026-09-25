@@ -2,12 +2,7 @@ services:
   - type: web
     name: dems-backend
     env: python
-    buildCommand: |
-      echo "🚀 Installing Python 3.14 with minimal packages..."
-      pip install --no-cache-dir -r requirements-render.txt
-      echo "📦 Collecting static files..."
-      python manage.py collectstatic --noinput
-      echo "✅ Build complete! AI libraries can be installed later via Shell."
+    buildCommand: pip install --no-cache-dir -r requirements-render.txt && python manage.py collectstatic --noinput
     startCommand: gunicorn dems_backend.wsgi:application
     envVars:
       - key: PYTHON_VERSION
