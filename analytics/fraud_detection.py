@@ -1,15 +1,25 @@
 # backend/analytics/fraud_detection.py
 # COMPLETE FRAUD DETECTION WITH ML ENHANCEMENT
+# ✅ Optional ML imports
+try:
+    import numpy as np
+    import pandas as pd
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+    import joblib
+    ML_AVAILABLE = True
+except ImportError:
+    np = None
+    pd = None
+    RandomForestClassifier = None
+    StandardScaler = None
+    train_test_split = None
+    joblib = None
+    ML_AVAILABLE = False
+    print("⚠️ ML libraries not available - using rule-based detection only")
 
-import json
-import numpy as np
-import pandas as pd
-from datetime import datetime, timedelta
-from collections import defaultdict, Counter
-from typing import Dict, List, Optional, Tuple
-import logging
-from dataclasses import dataclass, field
-import joblib
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
@@ -117,6 +127,8 @@ class FraudDetector:
     # ============================================================
     
     def train_model(self, historical_data: List[Dict], labels: List[int] = None):
+        if not ML_AVAILABLE:
+           return {"error": "ML libraries not available"}
         """
         Train ML model on historical fraud data
         
