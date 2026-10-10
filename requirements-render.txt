@@ -25,8 +25,8 @@ whitenoise==6.8.2
 
 # Images (lightweight only)
 Pillow==10.4.0
-numpy==1.26.0
 
+numpy==2.2.0
 # Utilities
 python-decouple==3.8
 requests==2.32.3
