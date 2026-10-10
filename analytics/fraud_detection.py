@@ -1,34 +1,54 @@
 # backend/analytics/fraud_detection.py
-# COMPLETE FRAUD DETECTION WITH ML ENHANCEMENT
-# ✅ Optional ML imports
+# COMPLETE FRAUD DETECTION WITH OPTIONAL ML ENHANCEMENT
+# ✅ Works with or without scikit-learn (Python 3.14 compatible)
+
+import json
+import os
+import pickle
+import logging
+from datetime import datetime, timedelta
+from collections import defaultdict, Counter
+from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from pathlib import Path
+
+# ============================================================
+# ✅ OPTIONAL IMPORTS - Works with or without ML libraries
+# ============================================================
 try:
     import numpy as np
+except ImportError:
+    np = None
+    print("⚠️ numpy not available")
+
+try:
     import pandas as pd
+except ImportError:
+    pd = None
+    print("⚠️ pandas not available")
+
+try:
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.preprocessing import StandardScaler
     from sklearn.model_selection import train_test_split
     from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
     import joblib
     ML_AVAILABLE = True
+    print("✅ ML libraries loaded (scikit-learn, joblib)")
 except ImportError:
-    np = None
-    pd = None
     RandomForestClassifier = None
     StandardScaler = None
     train_test_split = None
+    accuracy_score = None
+    precision_score = None
+    recall_score = None
+    f1_score = None
     joblib = None
     ML_AVAILABLE = False
     print("⚠️ ML libraries not available - using rule-based detection only")
 
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-import os
-import pickle
-from pathlib import Path
-
 logger = logging.getLogger(__name__)
+
 
 # ============================================================
 # DATA CLASSES
@@ -44,6 +64,7 @@ class FraudAlert:
     data: Dict = field(default_factory=dict)
     risk_score: float = 0.0
 
+
 @dataclass
 class FraudAnalysisResult:
     """Result of fraud analysis"""
@@ -55,12 +76,13 @@ class FraudAnalysisResult:
     recommendation: str = ''
     timestamp: str = ''
 
+
 # ============================================================
-# FRAUD DETECTOR WITH ML
+# FRAUD DETECTOR WITH OPTIONAL ML
 # ============================================================
 
 class FraudDetector:
-    """Advanced Fraud Detection with ML enhancement"""
+    """Advanced Fraud Detection with optional ML enhancement"""
     
     def __init__(self, model_path: str = None):
         self.session_data = defaultdict(list)
@@ -69,9 +91,13 @@ class FraudDetector:
         self.ip_activity = defaultdict(list)
         self.device_activity = defaultdict(list)
         
-        # ML Model
+        # ML Model (only if ML available)
         self.model = None
-        self.scaler = StandardScaler()
+        if ML_AVAILABLE:
+            self.scaler = StandardScaler()
+        else:
+            self.scaler = None
+        
         self.model_path = model_path or Path(__file__).parent / 'models' / 'fraud_model.pkl'
         self.scaler_path = Path(__file__).parent / 'models' / 'scaler.pkl'
         self.feature_names = [
@@ -92,6 +118,10 @@ class FraudDetector:
     
     def _load_model(self):
         """Load trained ML model if exists"""
+        if not ML_AVAILABLE:
+            logger.info("ℹ️ ML not available - using rule-based detection only")
+            return
+        
         try:
             if os.path.exists(self.model_path):
                 self.model = joblib.load(self.model_path)
@@ -111,8 +141,11 @@ class FraudDetector:
     
     def _save_model(self):
         """Save trained ML model"""
+        if not ML_AVAILABLE:
+            logger.warning("⚠️ Cannot save model - ML not available")
+            return False
+        
         try:
-            # Create models directory if it doesn't exist
             os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
             joblib.dump(self.model, self.model_path)
             joblib.dump(self.scaler, self.scaler_path)
@@ -127,15 +160,19 @@ class FraudDetector:
     # ============================================================
     
     def train_model(self, historical_data: List[Dict], labels: List[int] = None):
-        if not ML_AVAILABLE:
-           return {"error": "ML libraries not available"}
         """
         Train ML model on historical fraud data
-        
-        Args:
-            historical_data: List of user activity records
-            labels: List of labels (0 = normal, 1 = fraud)
         """
+        if not ML_AVAILABLE:
+            logger.warning("⚠️ ML libraries not available - cannot train model")
+            return {
+                'error': 'ML libraries not available',
+                'accuracy': 0,
+                'precision': 0,
+                'recall': 0,
+                'f1_score': 0
+            }
+        
         try:
             df = pd.DataFrame(historical_data)
             
@@ -192,14 +229,13 @@ class FraudDetector:
             logger.error(f"Training fraud model failed: {e}")
             return None
     
-    def _generate_heuristic_labels(self, df: pd.DataFrame) -> List[int]:
+    def _generate_heuristic_labels(self, df) -> List[int]:
         """Generate labels using heuristic rules"""
         labels = []
         
         for _, row in df.iterrows():
             is_fraud = 0
             
-            # Heuristic rules
             if row.get('login_count_24h', 0) > 10:
                 is_fraud = 1
             elif row.get('unique_ips_24h', 0) > 5:
@@ -227,14 +263,6 @@ class FraudDetector:
     ) -> FraudAnalysisResult:
         """
         Analyze user behavior for fraud patterns
-        
-        Args:
-            user_id: User identifier
-            activity_type: Type of activity (LOGIN, EXAM_TAKING, etc.)
-            data: Activity data
-        
-        Returns:
-            FraudAnalysisResult object
         """
         timestamp = datetime.now().isoformat()
         alerts = []
@@ -318,24 +346,19 @@ class FraudDetector:
                 ))
         
         # ============================================================
-        # ML-BASED DETECTION (if model is available)
+        # ML-BASED DETECTION (only if model is available)
         # ============================================================
         
         ml_risk_score = 0
         ml_prediction = False
         
-        if self.model is not None:
+        if ML_AVAILABLE and self.model is not None:
             try:
-                # Extract features for ML
                 features = self._extract_ml_features(user_id, activity_type, data)
-                
-                # Scale features
                 features_scaled = self.scaler.transform([features])
-                
-                # Predict
                 ml_prediction = self.model.predict(features_scaled)[0]
                 ml_probability = self.model.predict_proba(features_scaled)[0]
-                ml_risk_score = ml_probability[1] * 100  # Probability of fraud
+                ml_risk_score = ml_probability[1] * 100
                 
                 if ml_prediction or ml_risk_score > 70:
                     alerts.append(FraudAlert(
@@ -345,7 +368,6 @@ class FraudDetector:
                         timestamp=timestamp,
                         data={'ml_score': ml_risk_score}
                     ))
-                
             except Exception as e:
                 logger.error(f"ML prediction failed: {e}")
         
@@ -353,11 +375,8 @@ class FraudDetector:
         # CALCULATE OVERALL RISK
         # ============================================================
         
-        # Calculate risk level
         risk_score = self._calculate_risk_score(alerts, flags, ml_risk_score)
         risk_level = self._get_risk_level(risk_score)
-        
-        # Generate recommendation
         recommendation = self._generate_recommendation(risk_level, alerts)
         
         return FraudAnalysisResult(
@@ -377,10 +396,12 @@ class FraudDetector:
     def _extract_ml_features(self, user_id: str, activity_type: str, data: Dict) -> List[float]:
         """Extract features for ML model"""
         
-        # Get user session history
+        if not ML_AVAILABLE or np is None:
+            return [0.0] * 10
+        
         user_sessions = self.session_data.get(user_id, [])
         
-        # 1. Login time hour (0-23)
+        # 1. Login time hour
         login_hour = datetime.now().hour
         
         # 2. Login count in last 24 hours
@@ -406,7 +427,7 @@ class FraudDetector:
         )
         unique_devices_24h = len([d for d in devices_24h if d])
         
-        # 5. Action speed (average time between actions)
+        # 5. Action speed
         recent_actions = user_sessions[-10:] if len(user_sessions) >= 10 else user_sessions
         if len(recent_actions) > 1:
             times = [s['timestamp'] for s in recent_actions]
@@ -418,7 +439,7 @@ class FraudDetector:
         else:
             action_speed_ms = 1000
         
-        # 6. Tab switches (from data)
+        # 6. Tab switches
         tab_switches = data.get('tab_switches', 0)
         
         # 7. Pattern deviation score
@@ -427,14 +448,14 @@ class FraudDetector:
         # 8. Unusual time score
         unusual_time = 1.0 if (login_hour < 4 or login_hour > 23) else 0.0
         
-        # 9. IP reputation score (placeholder)
-        ip_reputation = 0.0  # Could integrate with external API
+        # 9. IP reputation score
+        ip_reputation = 0.0
         
         # 10. Device fingerprint score
         device_fingerprint_score = 1.0 if data.get('device_fingerprint') else 0.0
         
         features = [
-            login_hour / 24.0,  # Normalize
+            login_hour / 24.0,
             min(login_count_24h / 20.0, 1.0),
             min(unique_ips_24h / 10.0, 1.0),
             min(unique_devices_24h / 5.0, 1.0),
@@ -450,12 +471,14 @@ class FraudDetector:
     
     def _calculate_pattern_deviation(self, user_id: str) -> float:
         """Calculate pattern deviation score"""
+        if np is None:
+            return 0.0
+        
         user_sessions = self.session_data.get(user_id, [])
         
         if len(user_sessions) < 10:
             return 0.0
         
-        # Count activity types
         type_counts = defaultdict(int)
         for session in user_sessions[-20:]:
             type_counts[session['type']] += 1
@@ -464,13 +487,11 @@ class FraudDetector:
         if total == 0:
             return 0.0
         
-        # Calculate entropy (higher = more deviation)
         entropy = -sum(
             (count / total) * np.log(count / total + 0.001) 
             for count in type_counts.values()
         )
         
-        # Normalize entropy (max entropy for 3 types = log(3) ≈ 1.1)
         max_entropy = np.log(len(type_counts) + 1)
         normalized_entropy = min(entropy / max_entropy, 1.0)
         
@@ -580,26 +601,21 @@ class FraudDetector:
         """Calculate overall risk score (0-100)"""
         score = 0.0
         
-        # Alert weights
         alert_weights = {
             'HIGH': 30,
             'MEDIUM': 15,
             'LOW': 5
         }
         
-        # Add alert scores
         for alert in alerts:
             score += alert_weights.get(alert.severity, 10)
         
-        # Add flag scores
         for flag in flags:
             severity = flag.get('severity', 'MEDIUM')
             score += alert_weights.get(severity, 10)
         
-        # Add ML score (weighted)
         score += ml_score * 0.4
         
-        # Cap at 100
         return min(score, 100.0)
     
     def _get_risk_level(self, score: float) -> str:
@@ -681,12 +697,14 @@ class FraudDetector:
         """Update model with new data"""
         if self.model is None:
             return self.train_model(new_data, labels)
-        
-        # Incremental learning (retrain with new data)
         return self.train_model(new_data, labels)
     
     def export_model(self, export_path: str):
         """Export model for deployment"""
+        if not ML_AVAILABLE:
+            logger.warning("⚠️ Cannot export - ML not available")
+            return False
+        
         try:
             joblib.dump(self.model, export_path)
             return True
@@ -696,6 +714,10 @@ class FraudDetector:
     
     def import_model(self, import_path: str):
         """Import trained model"""
+        if not ML_AVAILABLE:
+            logger.warning("⚠️ Cannot import - ML not available")
+            return False
+        
         try:
             self.model = joblib.load(import_path)
             return True
