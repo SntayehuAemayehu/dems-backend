@@ -22,8 +22,15 @@ ALLOWED_HOSTS = os.environ.get(
     'ALLOWED_HOSTS',
     '127.0.0.1,localhost,0.0.0.0'
 ).split(',')
-if '.onrender.com' not in ALLOWED_HOSTS:
-    ALLOWED_HOSTS.append('.onrender.com')
+
+# ✅ Add your specific Render URLs
+ALLOWED_HOSTS.extend([
+    '.onrender.com',
+    'dems-backend-0dxk.onrender.com',
+    'dems-frontend.onrender.com',
+    'localhost',
+    '127.0.0.1',
+])
 
 # ================================================================
 # ✅ CHANGE 3: PRODUCTION-READY SECRET KEY
