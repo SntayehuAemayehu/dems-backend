@@ -66,32 +66,37 @@ class GradingResult:
 # ============================================================
 # PLAGIARISM DETECTOR - ENHANCED
 # ============================================================
-
 class PlagiarismDetector:
     """Advanced Plagiarism Detection with multiple methods"""
-    if SKLEARN_AVAILABLE:
-    self.vectorizer = TfidfVectorizer(
-        stop_words='english',
-        max_features=10000,
-        ngram_range=(1, 3)
-    )
-else:
-    self.vectorizer = None
     
+    def __init__(self):
+        # ✅ Conditional vectorizer setup
+        if SKLEARN_AVAILABLE:
+            self.vectorizer = TfidfVectorizer(
+                stop_words='english',
+                max_features=10000,
+                ngram_range=(1, 3)
+            )
+        else:
+            self.vectorizer = None
+        
         self.word_pattern = re.compile(r'\b[a-zA-Z]+\b')
         self.sentence_pattern = re.compile(r'[.!?]+')
         self.cache = {}
     
-@lru_cache(maxsize=1000)
-def _get_tfidf_matrix(self, text1: str, text2: str):
-    """Cached TF-IDF computation"""
-    try:
-        tfidf_matrix = self.vectorizer.fit_transform([text1, text2])
-        similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])
-        return similarity[0][0]
-    except Exception as e:
-        logger.error(f"TF-IDF computation error: {e}")
-        return 0.0
+    @lru_cache(maxsize=1000)
+    def _get_tfidf_matrix(self, text1: str, text2: str):
+        """Cached TF-IDF computation with fallback"""
+        if not SKLEARN_AVAILABLE or self.vectorizer is None:
+            # Fallback: use SequenceMatcher
+            return SequenceMatcher(None, text1, text2).ratio()
+        try:
+            tfidf_matrix = self.vectorizer.fit_transform([text1, text2])
+            similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])
+            return similarity[0][0]
+        except Exception as e:
+            logger.error(f"TF-IDF computation error: {e}")
+            return SequenceMatcher(None, text1, text2).ratio()
     
     def check_plagiarism(self, text1: str, text2: str, threshold: float = 0.7) -> PlagiarismResult:
         """
@@ -105,7 +110,7 @@ def _get_tfidf_matrix(self, text1: str, text2: str):
         Returns:
             PlagiarismResult object
         """
-        # Clean texts
+
         text1_clean = self._clean_text(text1)
         text2_clean = self._clean_text(text2)
         
