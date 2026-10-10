@@ -59,7 +59,7 @@ urlpatterns = [
     # Payment status and access endpoints
     path('payment-status/', views.StudentPaymentStatusView.as_view(), name='payment-status'),
     path('check-access/', views.CheckStudentAccessView.as_view(), name='check-access'),
-    
+    path('payment-config/', views.StudentPaymentConfigView.as_view(), name='student-payment-config'),
     # Batch Processing URLs
     path('batch/activate-students/', views.BatchStudentActivationView.as_view(), name='batch-activate-students'),
     path('batch/verify-payments/', views.BatchPaymentVerificationView.as_view(), name='batch-verify-payments'),

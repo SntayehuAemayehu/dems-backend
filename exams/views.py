@@ -5,15 +5,18 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.utils import timezone
 from django.db import transaction
-from .models import Exam, Question, ExamAttempt, Answer
+from .models import Exam, Question, ExamAttempt, Answer, ExamRecording
 from .serializers import ExamSerializer, QuestionSerializer, ExamAttemptSerializer
 from accounts.models import StudentProfile
 from notifications.utils import send_notification
 from courses.models import Course, Enrollment
 from proctoring.models import ProctorSession, ProctorImage
+from accounts.face_service import extract_embedding, compare_embeddings
 import logging
+from django.core.files.base import ContentFile
+import os
 from .ai_proctor import AIProctorBackend
-
+from django.core.files.base import ContentFile
 logger = logging.getLogger(__name__)
 
 
@@ -408,15 +411,15 @@ class ExamResultsView(generics.ListAPIView):
 class ExamSubmissionsView(APIView):
     """Get all submissions for an exam with full details including essay answers"""
     permission_classes = [permissions.IsAuthenticated]
-    
+
     def get(self, request, exam_id):
         user = request.user
-        
+
         try:
             exam = Exam.objects.get(id=exam_id)
         except Exam.DoesNotExist:
             return Response({'error': 'Exam not found'}, status=status.HTTP_404_NOT_FOUND)
-        
+
         # Check permissions
         if user.role == 'TEACHER':
             if exam.course.instructor != user:
@@ -442,19 +445,19 @@ class ExamSubmissionsView(APIView):
                 {'error': 'Permission denied'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+
         attempts = ExamAttempt.objects.filter(
             exam=exam,
             status__in=['SUBMITTED', 'GRADED']
         ).select_related('student__user')
-        
+
         result = []
         for attempt in attempts:
             answers = Answer.objects.filter(attempt=attempt).select_related('question')
-            
+
             auto_graded_answers = []
             essay_answers = []
-            
+
             for answer in answers:
                 answer_data = {
                     'id': answer.id,
@@ -470,15 +473,20 @@ class ExamSubmissionsView(APIView):
                     'graded_at': answer.graded_at.isoformat() if answer.graded_at else None,
                     'feedback': answer.feedback if hasattr(answer, 'feedback') else '',
                 }
-                
+
                 if answer.question.type in ['MCQ', 'TF']:
                     auto_graded_answers.append(answer_data)
                 else:
                     essay_answers.append(answer_data)
-            
+
+            # ✅ student_id is the Registrar-generated ID (MAU2026000026),
+            # NOT the database PK. We keep 'student_pk' too just in case you need it.
+            registrar_id = attempt.student.student_id or ''
+
             result.append({
                 'attempt_id': attempt.id,
-                'student_id': attempt.student.id,
+                'student_id': registrar_id,                    # ✅ Registrar ID (string)
+                'student_pk': attempt.student.id,              # ✅ Database PK (int) — for debugging
                 'student_name': attempt.student.user.full_name,
                 'student_email': attempt.student.user.email,
                 'start_time': attempt.start_time.isoformat(),
@@ -497,14 +505,13 @@ class ExamSubmissionsView(APIView):
                 'essay_total_count': len(essay_answers),
                 'all_essay_graded': all(a['graded'] for a in essay_answers) if essay_answers else True,
             })
-        
+
         return Response({
             'exam_id': exam.id,
             'exam_title': exam.title,
             'total_submissions': len(result),
             'submissions': result
         })
-
 
 # exams/views.py - GradeEssayAnswerView - FIXED
 
@@ -1158,135 +1165,81 @@ class EditAnswerView(APIView):
 # EXAM SECURITY - COMPLETE HEARTBEAT WITH AI ANALYSIS
 # ============================================================
 
+from .trust_engine import TrustEngine
+
 class ExamHeartbeatView(APIView):
     """
-    Receive heartbeat from student during exam with FULL AI analysis.
-    This is the MAIN security endpoint for real-time monitoring.
+    Receive heartbeat. Server computes trust from raw signals.
+    CLIENT'S trust_score IS IGNORED.
     """
     permission_classes = [permissions.IsAuthenticated]
-    
+
     def post(self, request, attempt_id):
         try:
             attempt = ExamAttempt.objects.get(id=attempt_id, student__user=request.user)
         except ExamAttempt.DoesNotExist:
-            return Response({'error': 'Attempt not found'}, status=status.HTTP_404_NOT_FOUND)
-        
-        # Get data from request
-        trust_score = request.data.get('trust_score', 100)
-        network_latency = request.data.get('network_latency', 0)
-        mouse_movements = request.data.get('mouse_movements', 0)
-        keystrokes = request.data.get('keystrokes', 0)
-        tab_switches = request.data.get('tab_switches', 0)
-        violations = request.data.get('violations', 0)
-        is_fullscreen = request.data.get('is_fullscreen', True)
-        face_detected = request.data.get('face_detected', True)
-        multiple_faces = request.data.get('multiple_faces', False)
-        gaze_direction = request.data.get('gaze_direction', 'CENTER')
-        gaze_confidence = request.data.get('gaze_confidence', 0)
-        head_tilt_x = request.data.get('head_tilt_x', 0)
-        head_tilt_y = request.data.get('head_tilt_y', 0)
-        eyes_closed = request.data.get('eyes_closed', False)
-        objects_detected = request.data.get('objects_detected', [])
-        
-        # ✅ UPDATE ATTEMPT WITH REAL-TIME DATA
-        attempt.last_heartbeat = timezone.now()
-        attempt.trust_score = trust_score
-        attempt.tab_switch_count = tab_switches
-        attempt.suspicious_events_count = violations
-        
-        # ✅ UPDATE GAZE DATA
-        if gaze_direction:
-            gaze_data = {
-                'direction': gaze_direction,
-                'confidence': gaze_confidence,
-                'gaze_x': request.data.get('gaze_x', 0),
-                'gaze_y': request.data.get('gaze_y', 0),
-                'timestamp': timezone.now().isoformat()
-            }
-            if not attempt.gaze_analysis:
-                attempt.gaze_analysis = {'history': [], 'gaze_away_count': 0}
-            attempt.gaze_analysis['history'].append(gaze_data)
-            if len(attempt.gaze_analysis['history']) > 100:
-                attempt.gaze_analysis['history'] = attempt.gaze_analysis['history'][-100:]
-            if gaze_direction != 'CENTER':
-                attempt.gaze_analysis['gaze_away_count'] = attempt.gaze_analysis.get('gaze_away_count', 0) + 1
-        
-        # ✅ UPDATE OBJECT DETECTION
-        if objects_detected:
-            if not attempt.object_detection:
-                attempt.object_detection = {'detected_objects': [], 'suspicious_count': 0}
-            attempt.object_detection['detected_objects'].extend(objects_detected)
-            attempt.object_detection['suspicious_count'] += len(objects_detected)
-        
-        # ✅ UPDATE HEAD ANALYSIS
-        if head_tilt_x != 0 or head_tilt_y != 0:
-            if not attempt.head_analysis:
-                attempt.head_analysis = {'history': [], 'tilted_count': 0}
-            attempt.head_analysis['history'].append({
-                'tilt_x': head_tilt_x,
-                'tilt_y': head_tilt_y,
-                'timestamp': timezone.now().isoformat()
-            })
-            if abs(head_tilt_x) > 25 or abs(head_tilt_y) > 20:
-                attempt.head_analysis['tilted_count'] = attempt.head_analysis.get('tilted_count', 0) + 1
-        
-        # ✅ UPDATE EYE ANALYSIS
-        if eyes_closed:
-            if not attempt.eye_analysis:
-                attempt.eye_analysis = {'closed_count': 0, 'history': []}
-            attempt.eye_analysis['closed_count'] = attempt.eye_analysis.get('closed_count', 0) + 1
-            attempt.eye_analysis['history'].append({
-                'closed': eyes_closed,
-                'timestamp': timezone.now().isoformat()
-            })
-            if len(attempt.eye_analysis['history']) > 50:
-                attempt.eye_analysis['history'] = attempt.eye_analysis['history'][-50:]
-        
-        # ✅ RUN AI ANALYSIS
-        from .ai_proctor import AIProctorBackend
-        ai_proctor = AIProctorBackend()
-        analysis_result = ai_proctor.analyze_heartbeat(attempt, {
-            'trust_score': trust_score,
-            'network_latency': network_latency,
-            'mouse_movements': mouse_movements,
-            'keystrokes': keystrokes,
-            'tab_switches': tab_switches,
-            'violations': violations,
-            'is_fullscreen': is_fullscreen,
-            'face_detected': face_detected,
-            'multiple_faces': multiple_faces,
-            'gaze_direction': gaze_direction,
-            'eyes_closed': eyes_closed,
-        })
-        
-        attempt.save()
-        
-        # ✅ LOG SUSPICIOUS EVENTS TO PROCTORING
-        if analysis_result.get('is_flagged'):
-            from proctoring.models import ProctorLog
-            ProctorLog.objects.create(
-                attempt=attempt,
-                event_type='AUTO_FLAGGED',
-                details={
-                    'reason': analysis_result.get('flag_reason', 'AI flagged'),
-                    'risk_score': analysis_result.get('risk_score', 0),
-                    'risk_level': analysis_result.get('risk_level', 'UNKNOWN'),
-                    'violations': violations,
-                    'tab_switches': tab_switches,
-                }
-            )
-        
+            return Response({'error': 'Attempt not found'}, status=404)
+
+        # ============================================================
+        # SERVER-SIDE SIGNALS (not trusted from client)
+        # ============================================================
+        engine = TrustEngine(attempt)
+
+        # 1. Record heartbeat (detects regularity server-side)
+        hb_result = engine.record_heartbeat(request.data)
+
+        # 2. Increment tab switches (server-side counter)
+        # Client sends "increment_by", we cap it
+        increment = min(int(request.data.get('tab_switch_increment', 0)), 1)
+        if increment:
+            attempt.tab_switch_count = (attempt.tab_switch_count or 0) + increment
+
+        # 3. Fullscreen exits
+        fs_increment = min(int(request.data.get('fullscreen_exit_increment', 0)), 1)
+        if fs_increment:
+            attempt.fullscreen_exit_count = (attempt.fullscreen_exit_count or 0) + fs_increment
+
+        # 4. Record raw signals to history (server-side)
+        latency = request.data.get('network_latency')
+        if latency is not None:
+            try:
+                latency_val = float(latency)
+                history = attempt.network_latency_history or []
+                history.append(latency_val)
+                history = history[-100:]
+                attempt.network_latency_history = history
+            except (ValueError, TypeError):
+                pass
+
+        # 5. Compute trust SERVER-SIDE
+        result = engine.save_trust_to_attempt()
+
+        # Log if flagged
+        if result['should_flag']:
+            try:
+                from proctoring.models import ProctorLog
+                ProctorLog.objects.create(
+                    attempt=attempt,
+                    event_type='AUTO_FLAGGED',
+                    details={
+                        'source': 'server_trust_engine',
+                        'trust_score': result['trust_score'],
+                        'risk_level': result['risk_level'],
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Could not log flag: {e}")
+
         return Response({
             'status': 'ok',
-            'timestamp': timezone.now().isoformat(),
-            'risk_score': attempt.ai_risk_score,
-            'risk_level': attempt.ai_risk_level,
+            'trust_score': result['trust_score'],
+            'suspicion_score': result['suspicion_score'],
+            'risk_level': result['risk_level'],
             'is_flagged': attempt.ai_flagged,
             'is_locked': attempt.is_locked,
             'lock_reason': attempt.lock_reason if attempt.is_locked else None,
-            'suspicious_events': attempt.suspicious_events_count,
+            'time_since_last_heartbeat': hb_result['time_since_last'],
         })
-
 class FaceVerificationView(APIView):
     """
     Verify student's face with combined frontend + backend detection
@@ -1609,3 +1562,156 @@ class VerifyFaceView(APIView):
             'face_count': final_face_count,
             'is_flagged': False
         }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ExamRecordingUploadView(APIView):
+    """
+    Upload a video chunk.
+    POST /api/exams/attempt/<id>/recording/
+    Body (multipart): chunk=file, chunk_index=int, duration=float
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, attempt_id):
+        try:
+            attempt = ExamAttempt.objects.get(id=attempt_id, student__user=request.user)
+        except ExamAttempt.DoesNotExist:
+            return Response({'error': 'Attempt not found'}, status=404)
+
+        chunk = request.FILES.get('chunk')
+        chunk_index = request.data.get('chunk_index')
+        duration = request.data.get('duration', 0)
+
+        if not chunk:
+            return Response({'error': 'chunk file required'}, status=400)
+        if chunk_index is None:
+            return Response({'error': 'chunk_index required'}, status=400)
+
+        try:
+            chunk_index = int(chunk_index)
+        except (ValueError, TypeError):
+            return Response({'error': 'chunk_index must be int'}, status=400)
+
+        # Size limit: 10MB per chunk
+        if chunk.size > 10 * 1024 * 1024:
+            return Response({'error': 'Chunk too large (max 10MB)'}, status=400)
+
+        # Save
+        filename = f"attempt_{attempt_id}_chunk_{chunk_index:05d}.webm"
+
+        try:
+            recording, created = ExamRecording.objects.update_or_create(
+                attempt=attempt,
+                chunk_index=chunk_index,
+                defaults={
+                    'duration_seconds': float(duration or 0),
+                    'size_bytes': chunk.size,
+                }
+            )
+            recording.chunk_file.save(filename, ContentFile(chunk.read()), save=True)
+
+            return Response({
+                'success': True,
+                'chunk_index': chunk_index,
+                'total_chunks': ExamRecording.objects.filter(attempt=attempt).count(),
+                'recording_id': recording.id,
+            })
+        except Exception as e:
+            logger.error(f"Recording upload error: {e}")
+            return Response({'error': str(e)}, status=500)
+
+
+class ExamRecordingListView(APIView):
+    """
+    Get all recording chunks (for admin review).
+    GET /api/exams/attempt/<id>/recording/
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, attempt_id):
+        try:
+            attempt = ExamAttempt.objects.get(id=attempt_id)
+        except ExamAttempt.DoesNotExist:
+            return Response({'error': 'Attempt not found'}, status=404)
+
+        # Permission: student can see own, staff can see any in scope
+        user = request.user
+        if user.role == 'STUDENT':
+            if attempt.student.user != user:
+                return Response({'error': 'Permission denied'}, status=403)
+        elif user.role == 'TEACHER':
+            if attempt.exam.course.instructor != user:
+                return Response({'error': 'Permission denied'}, status=403)
+
+        recordings = ExamRecording.objects.filter(attempt=attempt).order_by('chunk_index')
+
+        return Response({
+            'attempt_id': attempt_id,
+            'total_chunks': recordings.count(),
+            'total_size_mb': sum(r.size_bytes for r in recordings) / (1024 * 1024),
+            'chunks': [
+                {
+                    'index': r.chunk_index,
+                    'url': request.build_absolute_uri(r.chunk_file.url) if r.chunk_file else None,
+                    'duration': r.duration_seconds,
+                    'size_kb': round(r.size_bytes / 1024, 1),
+                    'uploaded_at': r.uploaded_at.isoformat(),
+                }
+                for r in recordings
+            ]
+        })        
+class EnvironmentCheckView(APIView):
+    """Log environment check results."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, attempt_id):
+        try:
+            attempt = ExamAttempt.objects.get(id=attempt_id, student__user=request.user)
+        except ExamAttempt.DoesNotExist:
+            return Response({'error': 'Attempt not found'}, status=404)
+
+        env_data = request.data
+
+        # Log to proctor logs
+        try:
+            from proctoring.models import ProctorLog
+            ProctorLog.objects.create(
+                attempt=attempt,
+                event_type='OBJECT_DETECTED',  # reuse or add new type
+                details={
+                    'type': 'environment_check',
+                    'flags': env_data.get('flags', []),
+                    'severity': env_data.get('severity', 'LOW'),
+                    'is_vm': env_data.get('isVM', False),
+                    'is_rdp': env_data.get('isRDP', False),
+                    'is_virtual_camera': env_data.get('isVirtualCamera', False),
+                    'is_automated': env_data.get('isAutomated', False),
+                }
+            )
+        except Exception as e:
+            logger.error(f"Failed to log env check: {e}")
+
+        # Increment suspicion for critical
+        severity = env_data.get('severity', 'LOW')
+        if severity == 'CRITICAL':
+            attempt.suspicious_events_count += 3
+            attempt.save()
+        elif severity == 'HIGH':
+            attempt.suspicious_events_count += 1
+            attempt.save()
+
+        return Response({'success': True})
+# ============================================================
+# FACE IDENTITY VERIFICATION (delegates to accounts.views)
+# ============================================================
+
+class VerifyFaceIdentityView(APIView):
+    """
+    POST /api/exams/verify-face-identity/
+    Body: {"image_data": "...", "attempt_id": 123}
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        from accounts.views import VerifyFaceAtExamView
+        return VerifyFaceAtExamView().post(request)

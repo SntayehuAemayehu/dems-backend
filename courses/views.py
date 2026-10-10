@@ -18,15 +18,14 @@ from rest_framework.views import APIView
 import magic
 from django.core.files.storage import default_storage
 
-
 class CourseListView(generics.ListCreateAPIView):
     serializer_class = CourseSerializer
     permission_classes = [permissions.IsAuthenticated]
-    
+
     def get_queryset(self):
         user = self.request.user
         queryset = Course.objects.filter(is_active=True)
-        
+
         if user.role == 'STUDENT':
             try:
                 student = StudentProfile.objects.get(user=user)
@@ -39,28 +38,28 @@ class CourseListView(generics.ListCreateAPIView):
                     return Course.objects.none()
             except StudentProfile.DoesNotExist:
                 return Course.objects.none()
-        
+
         elif user.role == 'TEACHER':
             queryset = queryset.filter(instructor=user)
-        
+
         elif user.role == 'DEPT_HEAD':
             try:
                 department = user.headed_department
                 queryset = queryset.filter(department=department)
             except:
                 pass
-        
+
         return queryset.order_by('course_code')
-    
+
     def create(self, request, *args, **kwargs):
         if request.user.role not in ['TEACHER', 'ADMIN', 'DEPT_HEAD']:
             return Response(
                 {'error': 'Only teachers, admins, and department heads can create courses'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+
         data = request.data.copy()
-        
+
         if request.user.role == 'DEPT_HEAD':
             data['is_approved'] = True
             data['approved_by'] = request.user.id
@@ -70,20 +69,20 @@ class CourseListView(generics.ListCreateAPIView):
                     data['department'] = department.id
             except:
                 pass
-        
+
         if request.user.role == 'ADMIN':
             data['is_approved'] = True
-        
-        if not data.get('instructor'):
-            data['instructor'] = request.user.id
-        
+
+        # ✅ Respect the instructor from the payload (set by Dept Head / Admin).
+        # Only fall back to the current user when no instructor is provided.
+        instructor_id = data.get('instructor') or request.user.id
+
         serializer = self.get_serializer(data=data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
-        serializer.save(instructor=request.user)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+        serializer.save(instructor_id=instructor_id)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 class CourseDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Course.objects.all()
@@ -398,11 +397,11 @@ class DeptStudentListView(generics.ListAPIView):
 class DeptCourseListView(generics.ListCreateAPIView):
     serializer_class = CourseSerializer
     permission_classes = [permissions.IsAuthenticated]
-    
+
     def get_queryset(self):
         user = self.request.user
         queryset = Course.objects.filter(is_active=True)
-        
+
         if user.role == 'STUDENT':
             try:
                 student = StudentProfile.objects.get(user=user)
@@ -415,28 +414,28 @@ class DeptCourseListView(generics.ListCreateAPIView):
                     return Course.objects.none()
             except StudentProfile.DoesNotExist:
                 return Course.objects.none()
-        
+
         elif user.role == 'TEACHER':
             queryset = queryset.filter(instructor=user)
-        
+
         elif user.role == 'DEPT_HEAD':
             try:
                 department = user.headed_department
                 queryset = queryset.filter(department=department)
             except:
                 pass
-        
+
         return queryset.order_by('course_code')
-    
+
     def create(self, request, *args, **kwargs):
         if request.user.role not in ['TEACHER', 'ADMIN', 'DEPT_HEAD']:
             return Response(
                 {'error': 'Only teachers, admins, and department heads can create courses'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+
         data = request.data.copy()
-        
+
         if request.user.role == 'DEPT_HEAD':
             try:
                 department = request.user.headed_department
@@ -446,20 +445,19 @@ class DeptCourseListView(generics.ListCreateAPIView):
                     data['approved_by'] = request.user.id
             except:
                 pass
-        
+
         if request.user.role == 'ADMIN':
             data['is_approved'] = True
-        
-        if not data.get('instructor'):
-            data['instructor'] = request.user.id
-        
+
+        # ✅ Respect the instructor from the payload.
+        instructor_id = data.get('instructor') or request.user.id
+
         serializer = self.get_serializer(data=data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
-        serializer.save(instructor=request.user)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+        serializer.save(instructor_id=instructor_id)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 class StartLiveClassView(APIView):
     permission_classes = [permissions.IsAuthenticated]

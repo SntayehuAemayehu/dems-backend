@@ -1,1 +1,0 @@
-web: gunicorn dems_backend.asgi:application -k uvicorn.workers.UvicornWorker

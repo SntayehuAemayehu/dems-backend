@@ -101,7 +101,16 @@ class ExamAttempt(models.Model):
         ('HIGH', 'High Risk'),
         ('CRITICAL', 'Critical - Immediate Action Required')
     ])
-    
+    # exams/models.py — inside class ExamAttempt
+
+# ✅ Audio signal fields (with defaults so DB inserts work)
+    last_audio_loudness = models.FloatField(default=0.0)
+    last_audio_hz = models.FloatField(default=0.0)
+    last_speech_detected = models.BooleanField(default=False)
+    speech_events_10s = models.IntegerField(default=0)
+    # In ExamAttempt model - ADD these fields
+    heartbeat_history = models.JSONField(default=list, blank=True)
+    fullscreen_exit_count = models.IntegerField(default=0)
     # ✅ LOCKDOWN FIELDS
     is_locked = models.BooleanField(default=False)
     lock_reason = models.TextField(blank=True)
@@ -122,3 +131,22 @@ class Answer(models.Model):
     
     def __str__(self):
         return f"Answer for Q{self.question.id}"
+class ExamRecording(models.Model):
+    """Chunked video recording of exam session."""
+    attempt = models.ForeignKey(
+        ExamAttempt,
+        on_delete=models.CASCADE,
+        related_name='recordings'
+    )
+    chunk_index = models.IntegerField(default=0)
+    chunk_file = models.FileField(upload_to='recordings/%Y/%m/%d/')
+    duration_seconds = models.FloatField(default=0)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    size_bytes = models.BigIntegerField(default=0)
+
+    class Meta:
+        ordering = ['attempt', 'chunk_index']
+        unique_together = ('attempt', 'chunk_index')
+
+    def __str__(self):
+        return f"Recording for attempt {self.attempt_id} chunk {self.chunk_index}"       

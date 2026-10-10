@@ -190,6 +190,44 @@ class AdminConfigView(APIView):
                         value = 'true' if value else 'false'
                     SystemConfig.set_value(field, str(value), user)
             
+            # ✅ SYNC config → default BankAccount so students see updated info
+            try:
+                new_bank_name = request.data.get('bank_name')
+                new_account_name = request.data.get('account_name')
+                new_account_number = request.data.get('payment_account')
+
+                if new_bank_name or new_account_number:
+                    default_bank = BankAccount.objects.filter(is_default=True).first()
+                    if not default_bank:
+                        default_bank = BankAccount.objects.filter(is_active=True).first()
+
+                    if default_bank:
+                        if new_bank_name:
+                            default_bank.bank_name = new_bank_name
+                        if new_account_name:
+                            default_bank.account_name = new_account_name
+                        if new_account_number:
+                            default_bank.account_number = new_account_number
+                        default_bank.is_default = True
+                        default_bank.is_active = True
+                        default_bank.save()
+                        BankAccount.objects.exclude(id=default_bank.id).update(is_default=False)
+                    else:
+                        # No banks exist — create one from config
+                        BankAccount.objects.create(
+                            bank_name=new_bank_name or 'Commercial Bank of Ethiopia',
+                            account_name=new_account_name or 'DEMS University',
+                            account_number=new_account_number or '1000225566778',
+                            is_default=True,
+                            is_active=True
+                        )
+
+                # ✅ Clear cache so students instantly see new data
+                from django.core.cache import cache
+                cache.clear()
+            except Exception as e:
+                logger.warning(f"Failed to sync config to bank: {e}")
+            
             # Log the change
             SystemLog.objects.create(
                 user=user,
@@ -241,10 +279,10 @@ class StudentPaymentConfigView(APIView):
     def get(self, request):
         config = {
             'payment_account': SystemConfig.get_value('payment_account', '1000225566778'),
-            'payment_phone': SystemConfig.get_value('payment_phone', '0918114545'),
+            'payment_phone': SystemConfig.get_value('payment_phone', '0918114545'),  # ✅ live
             'bank_name': SystemConfig.get_value('bank_name', 'Commercial Bank of Ethiopia'),
             'account_name': SystemConfig.get_value('account_name', 'DEMS University'),
-            'payment_instructions': SystemConfig.get_value('payment_instructions', 'Please make payment to the above account and upload the receipt for verification.'),
+            'payment_instructions': SystemConfig.get_value('payment_instructions', '...'),
             'system_open': SystemConfig.get_value('system_open', 'true') == 'true',
         }
         return Response(config)
@@ -252,25 +290,40 @@ class StudentPaymentConfigView(APIView):
 
 # ============= ADMIN USER MANAGEMENT =============
 
+# analytics/views.py
+
 class AdminUsersView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsAdminUser]
-    
+
+    # ============================================================
+    # GET — List all users
+    # ============================================================
     def get(self, request):
         users = User.objects.all().order_by('-date_joined')
         data = []
+
         for user in users:
             department = ''
+            student_id = ''
+
             if user.role == 'STUDENT':
                 try:
-                    department = user.student_profile.department
-                except:
+                    sp = user.student_profile
+                    department = sp.department or ''
+                    student_id = sp.student_id or ''
+                except StudentProfile.DoesNotExist:
                     pass
+                except Exception:
+                    pass
+
             elif user.role in ['TEACHER', 'DEPT_HEAD']:
                 try:
-                    department = user.teacher_profile.department
-                except:
+                    department = user.teacher_profile.department or ''
+                except TeacherProfile.DoesNotExist:
                     pass
-            
+                except Exception:
+                    pass
+
             data.append({
                 'id': user.id,
                 'full_name': user.full_name,
@@ -281,9 +334,14 @@ class AdminUsersView(APIView):
                 'phone': user.phone or '',
                 'profile_picture': user.profile_picture.url if user.profile_picture else None,
                 'department': department,
+                'student_id': student_id,
             })
+
         return Response(data)
-    
+
+    # ============================================================
+    # POST — Create a new user (FIX: Accepts department ID OR name)
+    # ============================================================
     def post(self, request):
         try:
             email = request.data.get('email')
@@ -291,21 +349,46 @@ class AdminUsersView(APIView):
             password = request.data.get('password')
             role = request.data.get('role', 'STUDENT')
             phone = request.data.get('phone', '')
-            department_name = request.data.get('department', '')
-            headed_department_name = request.data.get('headed_department', '')
-            
+
+            department_value = request.data.get('department', '')
+            headed_department_value = request.data.get('headed_department', '')
+
+            # ---------- Validation ----------
             if not email or not full_name or not password:
                 return Response(
                     {'error': 'Email, full name, and password are required'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
+
             if User.objects.filter(email=email).exists():
                 return Response(
                     {'error': 'User with this email already exists'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
+
+            # ---------- Resolve department (accept ID or NAME) ----------
+            def resolve_department(value):
+                if not value:
+                    return ''
+                # Try as ID
+                try:
+                    dept_id = int(value)
+                    dept = Department.objects.filter(id=dept_id).first()
+                    if dept:
+                        return dept.name
+                except (ValueError, TypeError):
+                    pass
+                # Try as NAME
+                dept = Department.objects.filter(name__iexact=str(value)).first()
+                if dept:
+                    return dept.name
+                # Fallback: keep raw value so nothing is lost
+                return str(value)
+
+            department_name = resolve_department(department_value)
+            headed_department_name = resolve_department(headed_department_value)
+
+            # ---------- Create user ----------
             user = User.objects.create_user(
                 email=email,
                 full_name=full_name,
@@ -313,11 +396,12 @@ class AdminUsersView(APIView):
                 role=role,
                 phone=phone
             )
-            
+
+            # ---------- Create role-specific profile ----------
             if role == 'STUDENT':
                 StudentProfile.objects.create(
                     user=user,
-                    department=department_name,
+                    department=department_name,   # ✅ Real name saved
                     payment_status='PENDING',
                     registration_type='FRESH'
                 )
@@ -328,49 +412,51 @@ class AdminUsersView(APIView):
                     notification_type='SYSTEM_ALERT',
                     link='/registrar/dashboard'
                 )
-            
+
             elif role == 'TEACHER':
                 TeacherProfile.objects.create(
                     user=user,
                     department=department_name,
                     employee_id=f"TCH{user.id:06d}"
                 )
-            
+
             elif role == 'DEPT_HEAD':
+                final_dept = headed_department_name or department_name
                 TeacherProfile.objects.create(
                     user=user,
-                    department=headed_department_name,
+                    department=final_dept,
                     employee_id=f"HOD{user.id:06d}"
                 )
-                if headed_department_name:
+                # Assign as head of department
+                if final_dept:
                     try:
-                        department = Department.objects.get(name=headed_department_name)
-                        department.head = user
-                        department.save()
+                        dept = Department.objects.get(name=final_dept)
+                        dept.head = user
+                        dept.save()
                     except Department.DoesNotExist:
                         pass
-            
+
             elif role == 'FINANCE':
                 TeacherProfile.objects.create(
                     user=user,
                     department='Finance Department',
                     employee_id=f"FIN{user.id:06d}"
                 )
-            
+
             elif role == 'REGISTRAR':
                 TeacherProfile.objects.create(
                     user=user,
                     department='Registrar Office',
                     employee_id=f"REG{user.id:06d}"
                 )
-            
+
             elif role == 'ADMIN':
                 TeacherProfile.objects.create(
                     user=user,
                     department='Administration',
                     employee_id=f"ADM{user.id:06d}"
                 )
-            
+
             return Response({
                 'message': 'User created successfully',
                 'user': {
@@ -378,14 +464,27 @@ class AdminUsersView(APIView):
                     'email': user.email,
                     'full_name': user.full_name,
                     'role': user.role,
-                    'department': department_name
+                    'department': department_name or headed_department_name
                 }
             }, status=status.HTTP_201_CREATED)
-            
+
         except Exception as e:
             logger.error(f"Error creating user: {e}")
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-    def put(self, request, user_id):
+
+    # ============================================================
+    # PUT — Update a user
+    # ============================================================
+    def put(self, request, user_id=None):
+        # If called without user_id, try to get from request body
+        if not user_id:
+            user_id = request.data.get('id')
+        if not user_id:
+            return Response(
+                {'error': 'User ID is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         try:
             user = User.objects.get(id=user_id)
             user.full_name = request.data.get('full_name', user.full_name)
@@ -395,15 +494,32 @@ class AdminUsersView(APIView):
             user.save()
             return Response({'message': 'User updated successfully'})
         except User.DoesNotExist:
-            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
-    def delete(self, request, user_id):
+            return Response(
+                {'error': 'User not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+    # ============================================================
+    # DELETE — Delete a user
+    # ============================================================
+    def delete(self, request, user_id=None):
+        if not user_id:
+            user_id = request.data.get('id')
+        if not user_id:
+            return Response(
+                {'error': 'User ID is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         try:
             user = User.objects.get(id=user_id)
             user.delete()
             return Response({'message': 'User deleted successfully'})
         except User.DoesNotExist:
-            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
-# ============= ADMIN STATS =============
+            return Response(
+                {'error': 'User not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
 class AdminStatsView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsAdminUser]
@@ -1628,192 +1744,213 @@ class BatchDocumentVerificationView(APIView):
 # REPLACE the entire view with this code
 
 class BatchStudentIDGenerationView(APIView):
-    """Batch generate Student IDs with auto-sequential numbering"""
+    """
+    Batch-generate Student IDs.
+
+    Uses SAVEPOINT-per-student so a single failure does NOT abort
+    the outer transaction (that was causing:
+    'An error occurred in the current transaction...').
+    """
     permission_classes = [permissions.IsAuthenticated]
-    
+
     def post(self, request):
+        # ---------- Permission ----------
         if request.user.role not in ['REGISTRAR', 'ADMIN']:
             return Response(
                 {'error': 'Permission denied. Only Registrar or Admin can generate IDs.'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+
         batch_type = request.data.get('batch_type')
         batch_value = request.data.get('batch_value')
         confirm = request.data.get('confirm', False)
-        
+
         if not batch_type:
             return Response(
                 {'error': 'batch_type is required (ids, department, all)'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        from analytics.models import SystemConfig
-        
-        # Get students based on batch type - only those without student_id
+
+        from analytics.models import SystemConfig, IDSequence
+
+        # ---------- Build queryset: only students with no ID yet ----------
         queryset = StudentProfile.objects.filter(
             payment_status='VERIFIED',
             documents_verified=True,
             student_id__isnull=True
         )
-        
+
         if batch_type == 'ids':
             if not batch_value:
-                return Response({'error': 'batch_value (IDs) is required'}, status=status.HTTP_400_BAD_REQUEST)
-            ids = [int(id.strip()) for id in batch_value.split(',') if id.strip().isdigit()]
+                return Response(
+                    {'error': 'batch_value (IDs) is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            ids = [int(i.strip()) for i in str(batch_value).split(',') if i.strip().isdigit()]
             queryset = queryset.filter(id__in=ids)
+
         elif batch_type == 'department':
             if not batch_value:
-                return Response({'error': 'batch_value (department name) is required'}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {'error': 'batch_value (department) is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             queryset = queryset.filter(department=batch_value)
+
         elif batch_type == 'all':
             pass
+
         else:
             return Response(
-                {'error': f'Invalid batch_type: {batch_type}. Use: ids, department, all'},
+                {'error': f'Invalid batch_type: {batch_type}. Use ids, department, all.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        total_students = queryset.count()
-        
+
+        # ✅ Materialize the queryset to a list BEFORE the loop
+        students_list = list(queryset)
+        total_students = len(students_list)
+
         if total_students == 0:
             return Response({
                 'message': 'No students found eligible for ID generation',
                 'total': 0,
                 'generated': 0,
                 'failed': 0,
-                'confirm_required': False
+                'confirm_required': False,
             }, status=status.HTTP_200_OK)
-        
-        # Get current configuration
+
+        # ---------- Config ----------
         prefix = SystemConfig.get_value('student_id_prefix', 'MAU')
-        format_string = SystemConfig.get_value('student_id_format', '{prefix}{year}{seq_padded}')
+        format_string = SystemConfig.get_value(
+            'student_id_format', '{prefix}{year}{seq_padded}'
+        )
         year = timezone.now().year
-        
-        # If not confirmed, return preview
+
+        # ---------- PREVIEW MODE ----------
         if not confirm:
-            students_data = []
-            for student in queryset[:10]:
-                students_data.append({
-                    'id': student.id,
-                    'name': student.user.full_name,
-                    'department': student.department,
-                })
-            
-            # Generate examples of what IDs will look like
-            examples = []
-            current_count = StudentProfile.objects.filter(
+            existing_count = StudentProfile.objects.filter(
                 student_id__isnull=False
             ).count()
-            
-            for i in range(current_count + 1, current_count + 6):
+
+            examples = []
+            for i in range(existing_count + 1, existing_count + 6):
                 try:
-                    example = format_string.format(
-                        prefix=prefix,
-                        year=year,
-                        seq=i,
+                    examples.append(format_string.format(
+                        prefix=prefix, year=year, seq=i,
                         seq_padded=str(i).zfill(6),
                         seq_4digit=str(i).zfill(4),
                         seq_3digit=str(i).zfill(3),
                         seq_2digit=str(i).zfill(2),
-                    )
-                    examples.append(example)
-                except:
+                    ))
+                except Exception:
                     examples.append(f"{prefix}{year}{str(i).zfill(6)}")
-            
+
+            preview = [{
+                'id': s.id,
+                'name': s.user.full_name if s.user else 'Unknown',
+                'department': s.department,
+            } for s in students_list[:10]]
+
             return Response({
                 'message': f'Found {total_students} students eligible for ID generation',
                 'total': total_students,
-                'preview': students_data,
+                'preview': preview,
+                'sample': len(preview),
                 'confirm_required': True,
-                'sample': len(students_data),
                 'id_format': format_string,
                 'id_prefix': prefix,
                 'id_examples': examples,
-                'current_sequence': current_count,
-                'next_sequence': current_count + 1,
+                'current_sequence': existing_count,
+                'next_sequence': existing_count + 1,
             }, status=status.HTTP_200_OK)
-        
-        # ✅ Execute batch ID generation
+
+        # ---------- EXECUTE ----------
+        # Make sure an IDSequence row exists for this prefix/year.
+        try:
+            IDSequence.objects.get_or_create(prefix=prefix, year=year)
+        except Exception as e:
+            logger.warning(f"Could not init IDSequence: {e}")
+
         generated_count = 0
         failed_count = 0
         generated_ids = []
         failed_students = []
-        
-        try:
-            with transaction.atomic():
-                # ✅ Get current count of students with IDs
-                existing_count = StudentProfile.objects.filter(
-                    student_id__isnull=False
-                ).count()
-                
-                for student in queryset:
+
+        for student in students_list:
+            try:
+                # ✅ SAVEPOINT PER STUDENT — the key to preventing
+                # "transaction is broken" errors.
+                with transaction.atomic():
+                    # ---------- Get the next sequence number ----------
                     try:
-                        existing_count += 1
-                        
-                        # ✅ Generate ID using the format
-                        try:
-                            # Try to use department code if available
-                            dept_code = student.department[:3].upper() if student.department else 'GEN'
-                            
-                            student_id = format_string.format(
-                                prefix=prefix,
-                                year=year,
-                                seq=existing_count,
-                                seq_padded=str(existing_count).zfill(6),
-                                seq_4digit=str(existing_count).zfill(4),
-                                seq_3digit=str(existing_count).zfill(3),
-                                seq_2digit=str(existing_count).zfill(2),
-                                dept=dept_code,
-                            )
-                        except:
-                            # Fallback format
-                            student_id = f"{prefix}{year}{str(existing_count).zfill(6)}"
-                        
-                        # ✅ Save the ID
-                        student.student_id = student_id
-                        student.save()
-                        
-                        generated_ids.append({
-                            'student_id': student_id,
-                            'student_name': student.user.full_name,
-                            'sequence': existing_count,
-                        })
-                        
-                        # Send notification
-                        send_notification(
-                            recipient_user=student.user,
-                            title='🆔 Student ID Generated',
-                            message=f'Your Student ID {student_id} has been generated.',
-                            notification_type='SYSTEM_ALERT',
-                            link='/profile'
+                        seq = IDSequence.get_next_number(prefix=prefix, year=year)
+                    except Exception:
+                        seq = StudentProfile.objects.filter(
+                            student_id__isnull=False
+                        ).count() + 1
+
+                    dept_code = (student.department or 'GEN')[:3].upper()
+
+                    try:
+                        student_id = format_string.format(
+                            prefix=prefix, year=year, seq=seq,
+                            seq_padded=str(seq).zfill(6),
+                            seq_4digit=str(seq).zfill(4),
+                            seq_3digit=str(seq).zfill(3),
+                            seq_2digit=str(seq).zfill(2),
+                            dept=dept_code,
                         )
-                        
-                        generated_count += 1
-                    except Exception as e:
-                        failed_count += 1
-                        failed_students.append({
-                            'id': student.id,
-                            'name': student.user.full_name,
-                            'error': str(e)
-                        })
-                        logger.error(f"Failed to generate ID for student {student.id}: {e}")
-        except Exception as e:
-            logger.error(f"Batch ID generation failed: {e}")
-            return Response({
-                'error': f'Batch ID generation failed: {str(e)}',
-                'total': total_students,
-                'generated': generated_count,
-                'failed': failed_count
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+                    except Exception:
+                        student_id = f"{prefix}{year}{str(seq).zfill(6)}"
+
+                    # ---------- Guard against collisions ----------
+                    if StudentProfile.objects.filter(student_id=student_id).exists():
+                        student_id = f"{student_id}-{student.id}"
+
+                    student.student_id = student_id
+                    student.save(update_fields=['student_id'])
+
+                # ---------- Notification OUTSIDE the atomic block ----------
+                try:
+                    send_notification(
+                        recipient_user=student.user,
+                        title='🆔 Student ID Generated',
+                        message=f'Your Student ID {student_id} has been generated.',
+                        notification_type='SYSTEM_ALERT',
+                        link='/profile',
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Notification failed for {student.user.email}: {e}"
+                    )
+
+                generated_ids.append({
+                    'student_id': student_id,
+                    'student_name': student.user.full_name,
+                    'sequence': seq,
+                })
+                generated_count += 1
+
+            except Exception as e:
+                # Because each attempt used its own savepoint,
+                # this exception does NOT poison the outer transaction.
+                failed_count += 1
+                failed_students.append({
+                    'id': student.id,
+                    'name': student.user.full_name if student.user else 'Unknown',
+                    'error': str(e),
+                })
+                logger.error(
+                    f"Failed to generate ID for student {student.id}: {e}"
+                )
+
         return Response({
             'message': 'Batch ID generation completed',
             'total': total_students,
             'generated': generated_count,
             'failed': failed_count,
-            'generated_ids': generated_ids[:10] if generated_ids else [],
-            'failed_students': failed_students[:10] if failed_students else [],
+            'generated_ids': generated_ids[:10],
+            'failed_students': failed_students[:10],
             'confirm_required': False,
             'id_prefix': prefix,
             'id_format': format_string,

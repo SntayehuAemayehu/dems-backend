@@ -19,7 +19,8 @@ from django.core.exceptions import ValidationError
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.hashers import check_password
 from .models import User
-
+from django.http import FileResponse, Http404
+import os
 from analytics.models import SystemLog
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.password_validation import validate_password
@@ -1038,110 +1039,190 @@ DEMS University
 
 
 class RegistrarStudentDocumentsView(APIView):
-    """Get all documents for a student (Registrar only)"""
+    """Get all documents for a student (Registrar / Admin only)"""
     permission_classes = [permissions.IsAuthenticated]
-    
+
     def get(self, request, student_id):
         if request.user.role not in ['REGISTRAR', 'ADMIN']:
             return Response(
                 {'error': 'Permission denied. Only Registrar can view student documents.'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+
         try:
             student = StudentProfile.objects.get(id=student_id)
         except StudentProfile.DoesNotExist:
-            return Response({'error': 'Student not found'}, status=status.HTTP_404_NOT_FOUND)
-        
-        documents = {
-            'student_name': student.user.full_name,
-            'student_id': student.student_id,
-            'department': student.department,
-            'documents_submitted': student.documents_submitted,
-            'documents_verified': student.documents_verified,
-            'documents_verified_at': student.documents_verified_at,
-            'files': []
-        }
-        
-        doc_fields = [
-            ('grade_8_certificate', 'Grade 8 Certificate'),
-            ('grade_12_certificate', 'Grade 12 Certificate'),
-            ('transcript', 'Transcript'),
-            ('other_documents', 'Other Documents'),
-        ]
-        
-        for field, label in doc_fields:
-            file_obj = getattr(student, field)
-            if file_obj:
-                documents['files'].append({
-                    'field': field,
-                    'label': label,
-                    'filename': file_obj.name,
-                    'url': file_obj.url,
-                    'size': file_obj.size if hasattr(file_obj, 'size') else None,
-                    'uploaded_at': getattr(student, 'documents_verified_at', None)
-                })
-        
-        return Response(documents, status=status.HTTP_200_OK)
+            return Response(
+                {'error': 'Student not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        try:
+            documents = {
+                'student_name': student.user.full_name,
+                'student_id': student.student_id or '',
+                'department': student.department or '',
+                'documents_submitted': bool(student.documents_submitted),
+                'documents_verified': bool(student.documents_verified),
+                'documents_verified_at': (
+                    student.documents_verified_at.isoformat()
+                    if student.documents_verified_at else None
+                ),
+                'files': [],
+            }
+
+            doc_fields = [
+                ('grade_8_certificate', 'Grade 8 Certificate'),
+                ('grade_12_certificate', 'Grade 12 Certificate'),
+                ('transcript', 'Transcript'),
+                ('other_documents', 'Other Documents'),
+            ]
+
+            for field, label in doc_fields:
+                file_obj = getattr(student, field, None)
+                if file_obj:
+                    try:
+                        file_size = file_obj.size
+                    except Exception:
+                        file_size = None
+
+                    documents['files'].append({
+                        'field': field,
+                        'label': label,
+                        'filename': os.path.basename(file_obj.name),
+                        'size': file_size,
+                    })
+
+            return Response(documents, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.exception(f"RegistrarStudentDocumentsView failed for student {student_id}: {e}")
+            return Response(
+                {'error': f'Failed to load documents: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
 
 
 class RegistrarDownloadDocumentView(APIView):
-    """Download a specific student document (Registrar only)"""
+    """
+    Stream a specific student document (Registrar / Admin / Dept Head).
+
+    Default  →  Content-Disposition: attachment  (forces download)
+    ?stream=1 →  Content-Disposition: inline      (view in browser)
+    """
     permission_classes = [permissions.IsAuthenticated]
-    
+
     def get(self, request, document_type, student_id):
-        # Allow ADMIN, REGISTRAR, DEPT_HEAD to download documents
+        # ---------- Permission ----------
         if request.user.role not in ['REGISTRAR', 'ADMIN', 'DEPT_HEAD']:
             return Response(
-                {'error': 'Permission denied. Only Registrar, Admin, or Department Head can download documents.'},
+                {'error': 'Permission denied.'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+
+        # ---------- Load student ----------
         try:
             student = StudentProfile.objects.get(id=student_id)
         except StudentProfile.DoesNotExist:
-            return Response({'error': 'Student not found'}, status=status.HTTP_404_NOT_FOUND)
-        
-        # Check if Department Head has access to this student
+            return Response(
+                {'error': 'Student not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # ---------- Dept head scope ----------
         if request.user.role == 'DEPT_HEAD':
             try:
                 department = request.user.headed_department
                 if student.department != department.name:
                     return Response(
-                        {'error': 'You can only access documents from students in your department'},
+                        {'error': 'You can only access students in your department'},
                         status=status.HTTP_403_FORBIDDEN
                     )
-            except:
+            except Exception:
                 return Response(
                     {'error': 'You are not assigned to any department'},
                     status=status.HTTP_403_FORBIDDEN
                 )
-        
-        valid_types = ['grade_8_certificate', 'grade_12_certificate', 'transcript', 'other_documents']
-        
+
+        # ---------- Validate document_type ----------
+        valid_types = [
+            'grade_8_certificate',
+            'grade_12_certificate',
+            'transcript',
+            'other_documents',
+        ]
         if document_type not in valid_types:
             return Response(
-                {'error': f'Invalid document type. Valid types: {", ".join(valid_types)}'},
+                {'error': f'Invalid document type. Valid: {", ".join(valid_types)}'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        file_obj = getattr(student, document_type)
+
+        # ---------- Get file ----------
+        file_obj = getattr(student, document_type, None)
         if not file_obj:
             return Response(
-                {'error': f'Document {document_type} not found for this student'},
+                {'error': f'Document "{document_type}" not found for this student'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        
-        # Build absolute URL for the file
-        file_url = request.build_absolute_uri(file_obj.url)
-        
-        return Response({
-            'url': file_url,
-            'filename': file_obj.name,
-            'student_name': student.user.full_name,
-            'student_id': student.student_id,
-            'document_type': document_type
-        }, status=status.HTTP_200_OK)
+
+        # ---------- Detect extension & content type ----------
+        original_name = os.path.basename(file_obj.name)
+        ext = os.path.splitext(original_name)[1].lower() or '.bin'
+
+        content_type_map = {
+            '.pdf':  'application/pdf',
+            '.png':  'image/png',
+            '.jpg':  'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.gif':  'image/gif',
+            '.webp': 'image/webp',
+            '.svg':  'image/svg+xml',
+            '.txt':  'text/plain; charset=utf-8',
+            '.doc':  'application/msword',
+            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        }
+        content_type = content_type_map.get(ext, 'application/octet-stream')
+
+        # ---------- Build clean filename ----------
+        safe_student = (student.user.full_name or 'student').replace(' ', '_')
+        safe_field = document_type.replace('_', ' ')
+        clean_filename = f"{safe_student}_{safe_field}{ext}"
+
+        # ---------- Open the file safely ----------
+        try:
+            file_handle = file_obj.open('rb')
+        except FileNotFoundError:
+            return Response(
+                {'error': 'File exists in database but is missing on disk'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.exception(f"Failed to open file for student {student_id}: {e}")
+            return Response(
+                {'error': f'Could not open file: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        # ---------- Stream it ----------
+        as_inline = request.query_params.get('stream') == '1'
+
+        response = FileResponse(
+            file_handle,
+            as_attachment=not as_inline,
+            filename=clean_filename,
+            content_type=content_type,
+        )
+
+        response['Cache-Control'] = 'no-store, no-cache, must-revalidate, private'
+        response['Pragma'] = 'no-cache'
+        response['X-Content-Type-Options'] = 'nosniff'
+
+        if as_inline:
+            response['Content-Disposition'] = f'inline; filename="{clean_filename}"'
+
+        return response
 class RegistrationConfigView(APIView):
     """Get or update registration configuration"""
     permission_classes = [permissions.IsAuthenticated]
@@ -1463,6 +1544,7 @@ class AdminCreateUserView(APIView):
 
 # accounts/views.py - COMPLETE FIXED VERSION
 # INCLUDES ALL DEPARTMENT HEAD VIEWS
+from rest_framework import permissions, status
 
 from rest_framework import status, generics, permissions
 from rest_framework.response import Response
@@ -2306,93 +2388,90 @@ class RegistrarNotifyStudentView(APIView):
         }, status=status.HTTP_200_OK)
 
 
-class RegistrarStudentDocumentsView(APIView):
-    """Get all documents for a student (Registrar only)"""
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def get(self, request, student_id):
-        if request.user.role not in ['REGISTRAR', 'ADMIN']:
-            return Response(
-                {'error': 'Permission denied. Only Registrar can view student documents.'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        try:
-            student = StudentProfile.objects.get(id=student_id)
-        except StudentProfile.DoesNotExist:
-            return Response({'error': 'Student not found'}, status=status.HTTP_404_NOT_FOUND)
-        
-        documents = {
-            'student_name': student.user.full_name,
-            'student_id': student.student_id,
-            'department': student.department,
-            'documents_submitted': student.documents_submitted,
-            'documents_verified': student.documents_verified,
-            'documents_verified_at': student.documents_verified_at,
-            'files': []
-        }
-        
-        doc_fields = [
-            ('grade_8_certificate', 'Grade 8 Certificate'),
-            ('grade_12_certificate', 'Grade 12 Certificate'),
-            ('transcript', 'Transcript'),
-            ('other_documents', 'Other Documents'),
-        ]
-        
-        for field, label in doc_fields:
-            file_obj = getattr(student, field)
-            if file_obj:
-                documents['files'].append({
-                    'field': field,
-                    'label': label,
-                    'filename': file_obj.name,
-                    'url': file_obj.url,
-                    'size': file_obj.size if hasattr(file_obj, 'size') else None,
-                    'uploaded_at': getattr(student, 'documents_verified_at', None)
-                })
-        
-        return Response(documents, status=status.HTTP_200_OK)
 
 
-class RegistrarDownloadDocumentView(APIView):
-    """Download a specific student document (Registrar only)"""
-    permission_classes = [permissions.IsAuthenticated]
-    
+
+# accounts/views.py — at the TOP of the file, add:
+from django.views import View
+from django.http import FileResponse, HttpResponse
+
+
+class RegistrarDownloadDocumentView(View):
+    """
+    Plain Django View — bypasses DRF rendering entirely.
+    Prevents the binary stream from being JSON/HTML-wrapped.
+    """
+
     def get(self, request, document_type, student_id):
-        if request.user.role not in ['REGISTRAR', 'ADMIN']:
-            return Response(
-                {'error': 'Permission denied. Only Registrar can download documents.'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
+        from rest_framework_simplejwt.authentication import JWTAuthentication
+
+        # Manually authenticate (since plain View doesn't use DRF auth)
+        auth = JWTAuthentication()
+        try:
+            user_auth = auth.authenticate(request)
+            if user_auth is None:
+                return HttpResponse('Unauthorized', status=401)
+            user, _ = user_auth
+        except Exception:
+            return HttpResponse('Unauthorized', status=401)
+
+        if user.role not in ['REGISTRAR', 'ADMIN', 'DEPT_HEAD']:
+            return HttpResponse('Permission denied', status=403)
+
         try:
             student = StudentProfile.objects.get(id=student_id)
         except StudentProfile.DoesNotExist:
-            return Response({'error': 'Student not found'}, status=status.HTTP_404_NOT_FOUND)
-        
-        valid_types = ['grade_8_certificate', 'grade_12_certificate', 'transcript', 'other_documents']
-        
-        if document_type not in valid_types:
-            return Response(
-                {'error': f'Invalid document type. Valid types: {", ".join(valid_types)}'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        file_obj = getattr(student, document_type)
-        if not file_obj:
-            return Response(
-                {'error': f'Document {document_type} not found for this student'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        return Response({
-            'url': file_obj.url,
-            'filename': file_obj.name,
-            'student_name': student.user.full_name,
-            'student_id': student.student_id,
-            'document_type': document_type
-        }, status=status.HTTP_200_OK)
+            return HttpResponse('Student not found', status=404)
 
+        if user.role == 'DEPT_HEAD':
+            try:
+                dept = user.headed_department
+                if student.department != dept.name:
+                    return HttpResponse('Permission denied', status=403)
+            except Exception:
+                return HttpResponse('Permission denied', status=403)
+
+        valid_types = ['grade_8_certificate', 'grade_12_certificate', 'transcript', 'other_documents']
+        if document_type not in valid_types:
+            return HttpResponse('Invalid document type', status=400)
+
+        file_obj = getattr(student, document_type, None)
+        if not file_obj or not file_obj.name:
+            return HttpResponse('Document not found', status=404)
+
+        ext = os.path.splitext(file_obj.name)[1].lower()
+        content_type_map = {
+            '.pdf':  'application/pdf',
+            '.png':  'image/png',
+            '.jpg':  'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.gif':  'image/gif',
+            '.webp': 'image/webp',
+        }
+        content_type = content_type_map.get(ext, 'application/octet-stream')
+
+        try:
+            fh = file_obj.open('rb')
+        except FileNotFoundError:
+            return HttpResponse('File missing on disk', status=404)
+
+        safe_student = (student.user.full_name or 'student').replace(' ', '_')
+        safe_field = document_type.replace('_', ' ')
+        clean_filename = f"{safe_student}_{safe_field}{ext}"
+
+        as_inline = request.GET.get('stream') == '1'
+
+        # ✅ FileResponse guarantees no DRF/HTML wrapping
+        response = FileResponse(
+            fh,
+            as_attachment=not as_inline,
+            filename=clean_filename,
+            content_type=content_type,
+        )
+        if as_inline:
+            response['Content-Disposition'] = f'inline; filename="{clean_filename}"'
+        response['X-Content-Type-Options'] = 'nosniff'
+        return response
 
 # ============= REGISTRAR CONFIGURATION VIEWS =============
 
@@ -4412,4 +4491,253 @@ def check_session_expiration(request):
     except Session.DoesNotExist:
         return True
     
-    return False       
+    return False
+# backend/accounts/views.py - ADD THESE IMPORTS AT TOP
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status, permissions
+from django.utils import timezone
+from .face_service import extract_face_embedding, verify_against_reference
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# FACE ENROLLMENT - Called during registration or first login
+# ============================================================
+
+class FaceEnrollmentView(APIView):
+    """
+    Enroll student's face by storing embedding.
+    POST /api/auth/enroll-face/
+    Body: { "image_data": "data:image/jpeg;base64,..." }
+
+    ✅ Rules:
+      - Only students can enroll
+      - Once enrolled, CANNOT re-enroll (DB is source of truth)
+      - Re-enrollment only via admin reset endpoint
+      - Saves: face_embedding (128 floats), face_enrolled=True, face_enrolled_at, reference image
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        # --------------------------------------------------------
+        # 1. Role check
+        # --------------------------------------------------------
+        if request.user.role != 'STUDENT':
+            return Response(
+                {'error': 'Only students can enroll face'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # --------------------------------------------------------
+        # 2. Get student profile FIRST (so we can check existing)
+        # --------------------------------------------------------
+        try:
+            student = request.user.student_profile
+        except Exception:
+            return Response(
+                {'error': 'Student profile not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # --------------------------------------------------------
+        # 3. ✅ BLOCK RE-ENROLLMENT
+        #    If already enrolled, refuse. Admin must reset first.
+        # --------------------------------------------------------
+        if student.face_enrolled and student.face_embedding:
+            return Response({
+                'success': False,
+                'error': 'Face is already enrolled. Only an administrator can reset it.',
+                'already_enrolled': True,
+                'enrolled_at': student.face_enrolled_at.isoformat() if student.face_enrolled_at else None,
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # --------------------------------------------------------
+        # 4. Validate image_data
+        # --------------------------------------------------------
+        image_data = request.data.get('image_data')
+        if not image_data:
+            return Response(
+                {'error': 'image_data is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # --------------------------------------------------------
+        # 5. Extract 128-d face embedding
+        # --------------------------------------------------------
+        result = extract_face_embedding(image_data)
+
+        if not result['success']:
+            return Response({
+                'success': False,
+                'error': result.get('error', 'Face enrollment failed'),
+                'face_detected': result.get('face_detected', False),
+                'face_count': result.get('face_count', 0),
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # --------------------------------------------------------
+        # 6. Save embedding + flags to DB
+        # --------------------------------------------------------
+        student.face_embedding = result['embedding']
+        student.face_enrolled = True
+        student.face_enrolled_at = timezone.now()
+        student.face_verification_failures = 0
+
+        # --------------------------------------------------------
+        # 7. Save reference image (optional — do not fail hard)
+        # --------------------------------------------------------
+        try:
+            from django.core.files.base import ContentFile
+            import base64
+
+            img_data = image_data
+            if ',' in img_data:
+                img_data = img_data.split(',')[1]
+            img_bytes = base64.b64decode(img_data)
+
+            filename = (
+                f"face_ref_{student.student_id or student.id}_"
+                f"{timezone.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+            )
+            student.face_reference_image.save(
+                filename,
+                ContentFile(img_bytes),
+                save=False,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to save reference image: {e}")
+
+        # --------------------------------------------------------
+        # 8. Persist everything in ONE save
+        # --------------------------------------------------------
+        student.save()
+
+        logger.info(f"✅ Face enrolled for {request.user.email}")
+
+        return Response({
+            'success': True,
+            'message': 'Face enrolled successfully',
+            'face_enrolled': True,
+            'enrolled_at': student.face_enrolled_at.isoformat(),
+        }, status=status.HTTP_200_OK)
+
+class FaceEnrollmentStatusView(APIView):
+    """
+    Check if student has enrolled face.
+    GET /api/auth/face-status/
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        if request.user.role != 'STUDENT':
+            return Response({'face_enrolled': False, 'message': 'Not a student'})
+
+        try:
+            student = request.user.student_profile
+            return Response({
+                'face_enrolled': student.face_enrolled,
+                'enrolled_at': student.face_enrolled_at.isoformat() if student.face_enrolled_at else None,
+                'verification_attempts': student.face_verification_attempts
+            })
+        except Exception:
+            return Response({
+                'face_enrolled': False,
+                'message': 'Student profile not found'
+            })
+
+
+class VerifyFaceAtExamView(APIView):
+    """
+    Verify student face at exam start.
+    POST /api/exams/verify-face-identity/
+    Body: { "image_data": "...", "attempt_id": 123 }
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        from exams.models import ExamAttempt
+
+        image_data = request.data.get('image_data')
+        attempt_id = request.data.get('attempt_id')
+
+        if not image_data:
+            return Response(
+                {'error': 'image_data is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Get student
+        try:
+            student = request.user.student_profile
+        except Exception:
+            return Response(
+                {'error': 'Student profile not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Check enrollment
+        if not student.face_enrolled or not student.face_embedding:
+            return Response({
+                'verified': False,
+                'error': 'Face not enrolled. Please enroll first.',
+                'needs_enrollment': True
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Verify
+        result = verify_against_reference(image_data, student.face_embedding)
+
+        # Update attempt with verification result
+        if attempt_id:
+            try:
+                attempt = ExamAttempt.objects.get(
+                    id=attempt_id,
+                    student=student
+                )
+                attempt.face_verified = result['verified']
+                attempt.face_match_confidence = result['confidence']
+
+                if not result['verified']:
+                    attempt.suspicious_events_count += 1
+                    student.face_verification_attempts += 1
+
+                    # Lock if too many failures
+                    if student.face_verification_attempts >= 5:
+                        attempt.is_locked = True
+                        attempt.lock_reason = 'Face verification failed 5 times'
+
+                attempt.save()
+                student.last_face_verification = timezone.now()
+                student.save()
+
+            except ExamAttempt.DoesNotExist:
+                pass
+
+        return Response({
+            'verified': result['verified'],
+            'confidence': result['confidence'],
+            'face_detected': result['face_detected'],
+            'multiple_faces': result['multiple_faces'],
+            'error': result.get('error')
+        }, status=status.HTTP_200_OK if result['verified'] else status.HTTP_400_BAD_REQUEST)           
+# accounts/views.py
+class AdminResetFaceView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, student_id):
+        if request.user.role != 'ADMIN':
+            return Response({'error': 'Admin only'}, status=403)
+
+        try:
+            student = StudentProfile.objects.get(id=student_id)
+        except StudentProfile.DoesNotExist:
+            return Response({'error': 'Student not found'}, status=404)
+
+        student.face_embedding = None
+        student.face_enrolled = False
+        student.face_enrolled_at = None
+        student.face_reference_image = None
+        student.save()
+
+        return Response({'success': True, 'message': 'Face reset. Student can re-enroll.'})        

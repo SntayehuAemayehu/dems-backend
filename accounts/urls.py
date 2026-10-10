@@ -2,7 +2,7 @@
 
 from django.urls import path
 from . import views
-
+from .views import FaceEnrollmentView, FaceEnrollmentStatusView,AdminResetFaceView
 urlpatterns = [
     # Auth endpoints
     path('register/', views.RegisterView.as_view(), name='register'),
@@ -69,4 +69,7 @@ urlpatterns = [
     
     # Student Grades
     path('grades/', views.StudentGradesView.as_view(), name='student-grades'),
-]
+    path('enroll-face/', FaceEnrollmentView.as_view(), name='enroll-face'),
+    path('face-status/', FaceEnrollmentStatusView.as_view(), name='face-status'),
+    path('admin/reset-face/<int:student_id>/', AdminResetFaceView.as_view(), name='admin-reset-face'),
+] 

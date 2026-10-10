@@ -2,7 +2,8 @@
 
 from django.urls import path
 from . import views
-
+from accounts.views import VerifyFaceAtExamView
+from .views import VerifyFaceIdentityView
 urlpatterns = [
     # Exam CRUD
     path('', views.ExamListView.as_view(), name='exams'),
@@ -40,8 +41,10 @@ urlpatterns = [
     path('attempt/<int:attempt_id>/face-verify/', views.FaceVerificationView.as_view(), name='face-verify'),
     path('attempt/<int:attempt_id>/gaze-analysis/', views.GazeAnalysisView.as_view(), name='gaze-analysis'),
     path('attempt/<int:attempt_id>/object-detection/', views.ObjectDetectionView.as_view(), name='object-detection'),
-
-
-
+    path('verify-face-identity/', VerifyFaceAtExamView.as_view(), name='verify-face-identity'),
+    path('attempt/<int:attempt_id>/recording/', views.ExamRecordingUploadView.as_view(), name='exam-recording'),
+    path('attempt/<int:attempt_id>/recordings/', views.ExamRecordingListView.as_view(), name='exam-recordings-list'),
+    path('attempt/<int:attempt_id>/env-check/', views.EnvironmentCheckView.as_view(), name='env-check'),
+    # ... existing paths ...
 
 ]

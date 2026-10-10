@@ -1,6 +1,6 @@
 from django.contrib import admin
 from .models import Exam, Question, ExamAttempt, Answer
-
+from .models import ExamRecording
 @admin.register(Exam)
 class ExamAdmin(admin.ModelAdmin):
     list_display = ('title', 'course', 'duration_minutes', 'start_time', 'end_time', 'is_published')
@@ -37,3 +37,16 @@ class AnswerAdmin(admin.ModelAdmin):
     list_display = ('attempt', 'question', 'marks_obtained', 'is_correct')
     list_filter = ('is_correct',)
     search_fields = ('attempt__student__user__full_name', 'question__text')
+ 
+
+@admin.register(ExamRecording)
+class ExamRecordingAdmin(admin.ModelAdmin):
+    list_display = ('id', 'attempt', 'chunk_index', 'duration_seconds', 'size_bytes', 'uploaded_at')
+    list_filter = ('attempt__exam', 'uploaded_at')
+    search_fields = ('attempt__student__user__full_name', 'attempt__exam__title')
+    readonly_fields = ('uploaded_at', 'size_bytes', 'duration_seconds')
+    ordering = ('-uploaded_at',)
+
+    def has_add_permission(self, request):
+        # Recordings are created via API, not admin
+        return False   
