@@ -1,37 +1,15 @@
 # backend/analytics/recommendations.py
 # AI Course Recommendations
-# ✅ Works with or without scikit-learn (Python 3.14 compatible)
 
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.feature_extraction.text import TfidfVectorizer
 from collections import defaultdict
 import json
 
-# ============================================================
-# ✅ OPTIONAL IMPORTS
-# ============================================================
-try:
-    import numpy as np
-except ImportError:
-    np = None
-    print("⚠️ numpy not available in recommendations")
-
-try:
-    from sklearn.metrics.pairwise import cosine_similarity
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    SKLEARN_AVAILABLE = True
-    print("✅ sklearn loaded in recommendations")
-except ImportError:
-    cosine_similarity = None
-    TfidfVectorizer = None
-    SKLEARN_AVAILABLE = False
-    print("⚠️ sklearn not available in recommendations - using popularity-based fallback")
-
-
 class CourseRecommender:
     def __init__(self):
-        if SKLEARN_AVAILABLE:
-            self.vectorizer = TfidfVectorizer(stop_words='english')
-        else:
-            self.vectorizer = None
+        self.vectorizer = TfidfVectorizer(stop_words='english')
         self.course_features = {}
         self.user_history = {}
     
@@ -57,12 +35,7 @@ class CourseRecommender:
         Get personalized course recommendations
         """
         if user_id not in self.user_history or not self.user_history[user_id]:
-            popular = self._get_popular_courses(top_n)
-            return {
-                'content_based': popular,
-                'collaborative': popular,
-                'hybrid': popular
-            }
+            return self._get_popular_courses(top_n)
         
         # Get user's enrolled courses
         user_courses = self.user_history[user_id]
@@ -88,10 +61,6 @@ class CourseRecommender:
     
     def _content_based(self, user_courses, top_n):
         """Content-based filtering"""
-        # ✅ Fallback if sklearn not available
-        if not SKLEARN_AVAILABLE or self.vectorizer is None:
-            return self._get_popular_courses(top_n)
-        
         # Get features of courses the user likes
         user_features = []
         for course_id in user_courses:
@@ -110,12 +79,8 @@ class CourseRecommender:
             if cid not in user_courses
         ]
         
-        try:
-            tfidf_matrix = self.vectorizer.fit_transform(all_features)
-            similarities = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:]).flatten()
-        except Exception as e:
-            print(f"⚠️ Content-based recommendation failed: {e}")
-            return self._get_popular_courses(top_n)
+        tfidf_matrix = self.vectorizer.fit_transform(all_features)
+        similarities = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:]).flatten()
         
         # Get top recommendations
         course_ids = [cid for cid in self.course_features if cid not in user_courses]
@@ -207,16 +172,11 @@ class CourseRecommender:
         for enrollment in self.enrollments:
             course_counts[enrollment.course_id] += 1
         
-        if not course_counts:
-            return []
-        
-        max_count = max(course_counts.values()) if course_counts else 1
-        
         sorted_courses = sorted(
             course_counts.items(),
             key=lambda x: x[1],
             reverse=True
         )[:top_n]
         
-        return [{'course_id': cid, 'score': count / max_count} 
+        return [{'course_id': cid, 'score': count / max(course_counts.values())} 
                 for cid, count in sorted_courses]
