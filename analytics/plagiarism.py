@@ -3,26 +3,11 @@
 
 import re
 import hashlib
+import numpy as np
 from difflib import SequenceMatcher
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 from collections import defaultdict, Counter
-
-# ✅ Optional imports (works with or without sklearn)
-try:
-    import numpy as np
-except ImportError:
-    np = None
-    print("⚠️ numpy not available")
-
-try:
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    from sklearn.metrics.pairwise import cosine_similarity
-    SKLEARN_AVAILABLE = True
-    print("✅ scikit-learn loaded")
-except ImportError:
-    TfidfVectorizer = None
-    cosine_similarity = None
-    SKLEARN_AVAILABLE = False
-    print("⚠️ scikit-learn not available - using basic similarity")
 import json
 import logging
 from typing import Dict, List, Tuple, Optional
@@ -66,37 +51,30 @@ class GradingResult:
 # ============================================================
 # PLAGIARISM DETECTOR - ENHANCED
 # ============================================================
+
 class PlagiarismDetector:
     """Advanced Plagiarism Detection with multiple methods"""
     
     def __init__(self):
-        # ✅ Conditional vectorizer setup
-        if SKLEARN_AVAILABLE:
-            self.vectorizer = TfidfVectorizer(
-                stop_words='english',
-                max_features=10000,
-                ngram_range=(1, 3)
-            )
-        else:
-            self.vectorizer = None
-        
+        self.vectorizer = TfidfVectorizer(
+            stop_words='english',
+            max_features=10000,
+            ngram_range=(1, 3)
+        )
         self.word_pattern = re.compile(r'\b[a-zA-Z]+\b')
         self.sentence_pattern = re.compile(r'[.!?]+')
         self.cache = {}
     
     @lru_cache(maxsize=1000)
     def _get_tfidf_matrix(self, text1: str, text2: str):
-        """Cached TF-IDF computation with fallback"""
-        if not SKLEARN_AVAILABLE or self.vectorizer is None:
-            # Fallback: use SequenceMatcher
-            return SequenceMatcher(None, text1, text2).ratio()
+        """Cached TF-IDF computation"""
         try:
             tfidf_matrix = self.vectorizer.fit_transform([text1, text2])
             similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])
             return similarity[0][0]
         except Exception as e:
             logger.error(f"TF-IDF computation error: {e}")
-            return SequenceMatcher(None, text1, text2).ratio()
+            return 0.0
     
     def check_plagiarism(self, text1: str, text2: str, threshold: float = 0.7) -> PlagiarismResult:
         """
@@ -110,7 +88,7 @@ class PlagiarismDetector:
         Returns:
             PlagiarismResult object
         """
-
+        # Clean texts
         text1_clean = self._clean_text(text1)
         text2_clean = self._clean_text(text2)
         

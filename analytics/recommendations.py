@@ -1,15 +1,9 @@
 # backend/analytics/recommendations.py
-try:
-    import numpy as np
-    from sklearn.metrics.pairwise import cosine_similarity
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    SKLEARN_AVAILABLE = True
-except ImportError:
-    np = None
-    cosine_similarity = None
-    TfidfVectorizer = None
-    SKLEARN_AVAILABLE = False
-    print("⚠️ sklearn not available in recommendations")
+# AI Course Recommendations
+
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.feature_extraction.text import TfidfVectorizer
 from collections import defaultdict
 import json
 
