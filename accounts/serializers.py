@@ -11,21 +11,32 @@ from .models import User, StudentProfile, TeacherProfile, Department, Registrati
 class UserSerializer(serializers.ModelSerializer):
     student_profile = serializers.SerializerMethodField()
     teacher_profile = serializers.SerializerMethodField()
+    profile_picture = serializers.SerializerMethodField()
     
     class Meta:
         model = User
         fields = ['id', 'email', 'full_name', 'phone', 'role', 'profile_picture', 'is_active', 'date_joined', 'student_profile', 'teacher_profile']
         read_only_fields = ['id', 'email', 'role', 'date_joined', 'is_active']
     
+    def get_profile_picture(self, obj):
+        if not obj.profile_picture:
+            return None
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(obj.profile_picture.url)
+        return obj.profile_picture.url
+    
     def get_student_profile(self, obj):
         try:
-            return StudentProfileSerializer(obj.student_profile).data
+            # ✅ PASS CONTEXT HERE (This was missing!)
+            return StudentProfileSerializer(obj.student_profile, context=self.context).data
         except:
             return None
     
     def get_teacher_profile(self, obj):
         try:
-            return TeacherProfileSerializer(obj.teacher_profile).data
+            # ✅ PASS CONTEXT HERE (This was missing!)
+            return TeacherProfileSerializer(obj.teacher_profile, context=self.context).data
         except:
             return None
 
@@ -264,11 +275,10 @@ class RegistrationConfigSerializer(serializers.ModelSerializer):
 # accounts/serializers.py - REPLACE Lines 265-290 with:
 
 class DeptHeadCourseSerializer(serializers.ModelSerializer):
-    """Serializer for Department Head course list"""
     instructor_name = serializers.CharField(source='instructor.full_name', read_only=True)
     department_name = serializers.CharField(source='department.name', read_only=True)
-    enrolled_count = serializers.IntegerField(read_only=True)
-    
+    enrolled_count = serializers.SerializerMethodField() # <--- FIXED
+
     class Meta:
         from courses.models import Course
         model = Course
@@ -276,6 +286,11 @@ class DeptHeadCourseSerializer(serializers.ModelSerializer):
                   'semester', 'capacity', 'instructor', 'instructor_name',
                   'department', 'department_name', 'is_active', 'is_approved',
                   'enrolled_count', 'created_at']
+
+    def get_enrolled_count(self, obj):
+        # Safely count enrollments without crashing if none exist
+        return obj.enrollments.count() if hasattr(obj, 'enrollments') else 0
+    
 # accounts/serializers.py - UPDATE DeptHeadTeacherListSerializer
 
 class DeptHeadTeacherListSerializer(serializers.ModelSerializer):
