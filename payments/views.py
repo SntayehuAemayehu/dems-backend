@@ -14,7 +14,11 @@ from django.db.models import Sum, Q
 from django.utils import timezone
 from django.http import FileResponse
 from django.conf import settings
-import qrcode
+try:
+    import qrcode
+    QRCODE_AVAILABLE = True
+except ImportError:
+    QRCODE_AVAILABLE = False
 from io import BytesIO
 from django.http import HttpResponse
 from django.conf import settings
