@@ -3,12 +3,13 @@ services:
     name: dems-backend
     env: python
     plan: free
-    buildCommand: |
-      cd backend
-      pip install --upgrade pip
-      pip install --no-cache-dir -r requirements-render.txt
-      python manage.py collectstatic --noinput
-      python manage.py migrate --noinput
+buildCommand: |
+  apt-get update && apt-get install -y libmagic1
+  cd backend
+  pip install --upgrade pip
+  pip install --no-cache-dir -r requirements-render.txt
+  python manage.py collectstatic --noinput
+  python manage.py migrate --noinput
     startCommand: cd backend && daphne -b 0.0.0.0 -p $PORT dems_backend.asgi:application
     envVars:
       - key: PYTHON_VERSION
