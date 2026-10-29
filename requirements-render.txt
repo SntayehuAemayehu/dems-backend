@@ -1,6 +1,6 @@
 # ============================================================
 # LIGHTWEIGHT REQUIREMENTS FOR RENDER FREE TIER
-# Python 3.14.0 Compatible
+# Python 3.14.0 Compatible (Core Web & API Features)
 # ============================================================
 
 # Django Core
@@ -31,6 +31,7 @@ numpy==2.5.3
 python-decouple==3.8
 requests==2.32.3
 gunicorn==22.0.0
+python-magic
 
 # AI (API only - no local models)
 openai==1.55.3
@@ -39,16 +40,3 @@ nltk==3.9.1
 # Payments
 stripe==10.12.0
 twilio==9.3.0
-python-magic
-# ============================================================
-# ❌ REMOVED (TOO HEAVY FOR 512MB RAM):
-# - tensorflow / tensorflow-hub
-# - torch / torchvision / torchaudio
-# - transformers
-# - sentence-transformers
-# - mediapipe
-# - opencv-contrib-python / opencv-python
-# - scikit-learn / scikit-image
-# - spacy / gensim / textblob / pytextrank
-# - matplotlib / seaborn / scipy
-# ============================================================
