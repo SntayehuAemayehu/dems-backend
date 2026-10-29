@@ -53,77 +53,101 @@ class ChatRoomDetailView(generics.RetrieveUpdateDestroyAPIView):
         room.save()
         return Response({'message': 'Chat room archived'})
 
+# chat/views.py - REPLACE MessageListView
 
 class MessageListView(generics.ListCreateAPIView):
     serializer_class = MessageSerializer
     permission_classes = [permissions.IsAuthenticated]
-    
+
     def get_queryset(self):
         room_id = self.kwargs.get('room_id')
+        # ✅ Only return messages if user is a participant
+        if not ChatRoom.objects.filter(
+            id=room_id, participants=self.request.user, is_active=True
+        ).exists():
+            return Message.objects.none()
         return Message.objects.filter(
-            room_id=room_id,
-            is_deleted=False
+            room_id=room_id, is_deleted=False
         ).select_related('sender').order_by('-created_at')
-    
-    def get_serializer_context(self):
-        context = super().get_serializer_context()
-        context['request'] = self.request
-        return context
-    
+
     def create(self, request, *args, **kwargs):
         room_id = self.kwargs.get('room_id')
-        
         try:
             room = ChatRoom.objects.get(id=room_id, is_active=True)
         except ChatRoom.DoesNotExist:
             return Response({'error': 'Chat room not found'}, status=status.HTTP_404_NOT_FOUND)
-        
-        if request.user not in room.participants.all():
-            return Response({'error': 'You are not a participant in this chat'}, status=status.HTTP_403_FORBIDDEN)
-        
-        content = request.data.get('content')
+
+        if not room.participants.filter(id=request.user.id).exists():
+            return Response({'error': 'Not a participant'}, status=status.HTTP_403_FORBIDDEN)
+
+        content = request.data.get('content', '').strip()
         if not content:
-            return Response({'error': 'Message content is required'}, status=status.HTTP_400_BAD_REQUEST)
-        
+            return Response({'error': 'Message content required'}, status=status.HTTP_400_BAD_REQUEST)
+
         message = Message.objects.create(
             room=room,
             sender=request.user,
             content=content,
             message_type=request.data.get('message_type', 'TEXT')
         )
-        
-        room.updated_at = timezone.now()
-        room.save(update_fields=['updated_at'])
-        
+        room.save()  # bumps updated_at
+
+        # Notify other participants
         for participant in room.participants.exclude(id=request.user.id):
             try:
                 send_notification(
                     recipient_user=participant,
                     title=f'💬 New message from {request.user.full_name}',
-                    message=f'{request.user.full_name}: {content[:50]}{"..." if len(content) > 50 else ""}',
+                    message=content[:100],
                     notification_type='CHAT_MESSAGE',
                     link=f'/chat/{room_id}'
                 )
-            except:
+            except Exception:
                 pass
-        
-        serializer = self.get_serializer(message)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+        return Response(self.get_serializer(message).data, status=status.HTTP_201_CREATED)
+
+# chat/views.py - REPLACE MessageDetailView
 
 class MessageDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = MessageSerializer
     permission_classes = [permissions.IsAuthenticated]
-    
+
     def get_queryset(self):
         return Message.objects.filter(is_deleted=False)
-    
+
     def delete(self, request, *args, **kwargs):
         message = self.get_object()
+
+        # ✅ Only sender can delete
         if message.sender != request.user:
-            return Response({'error': 'You can only delete your own messages'}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {'error': 'You can only delete your own messages'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # ✅ Only participants can act on this room
+        if not message.room.participants.filter(id=request.user.id).exists():
+            return Response({'error': 'Not a participant'}, status=status.HTTP_403_FORBIDDEN)
+
         message.soft_delete(request.user)
-        return Response({'message': 'Message deleted'})
+
+        # ✅ Notify other participants so they see the deletion live
+        for participant in message.room.participants.exclude(id=request.user.id):
+            try:
+                send_notification(
+                    recipient_user=participant,
+                    title='🗑️ Message deleted',
+                    message=f'{request.user.full_name} deleted a message.',
+                    notification_type='CHAT_MESSAGE',
+                    link=f'/chat/{message.room_id}'
+                )
+            except Exception:
+                pass
+
+        return Response({'message': 'Message deleted', 'id': message.id})
+
+
 
 
 class MarkMessagesReadView(APIView):
@@ -216,39 +240,49 @@ class TypingIndicatorView(APIView):
         
         return Response({'is_typing': status.is_typing})
 
+# chat/views.py - REPLACE GetOrCreatePrivateRoomView
 
 class GetOrCreatePrivateRoomView(APIView):
     permission_classes = [permissions.IsAuthenticated]
-    
+
     def post(self, request):
         other_user_id = request.data.get('user_id')
-        
         if not other_user_id:
             return Response({'error': 'user_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         try:
             other_user = User.objects.get(id=other_user_id)
         except User.DoesNotExist:
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
-        
+
         if other_user == request.user:
             return Response({'error': 'Cannot create chat with yourself'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Check if private room already exists
+
+        # ✅ Find EXISTING private room with EXACTLY these 2 participants
+        from django.db.models import Count
         rooms = ChatRoom.objects.filter(
             room_type='PRIVATE',
+            is_active=True,
             participants=request.user,
-            is_active=True
-        ).filter(participants=other_user)
-        
+        ).filter(participants=other_user).annotate(
+            num_participants=Count('participants')
+        ).filter(num_participants=2)
+
         if rooms.exists():
             room = rooms.first()
+            # Ensure both participants still in room
+            room.participants.add(request.user, other_user)
         else:
+            # Create new room
             room = ChatRoom.objects.create(
                 room_type='PRIVATE',
                 created_by=request.user,
-                name=f"{request.user.full_name} & {other_user.full_name}"
             )
             room.participants.add(request.user, other_user)
-        
-        return Response(ChatRoomSerializer(room, context={'request': request}).data)
+            room.name = f"Chat: {request.user.full_name} & {other_user.full_name}"
+            room.save(update_fields=['name'])
+
+        return Response(
+            ChatRoomSerializer(room, context={'request': request}).data,
+            status=status.HTTP_200_OK
+        )

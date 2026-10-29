@@ -2,17 +2,20 @@
 from rest_framework import serializers
 from .models import Exam, Question, ExamAttempt, Answer
 
+
 class QuestionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Question
         fields = '__all__'
         read_only_fields = ['exam']  # exam is read-only, set via URL
 
+
 class ExamSerializer(serializers.ModelSerializer):
     questions = QuestionSerializer(many=True, read_only=True)
     course_title = serializers.SerializerMethodField()
     course_code = serializers.SerializerMethodField()
     attempt_count = serializers.SerializerMethodField()
+    is_taken = serializers.SerializerMethodField()  # ✅ NEW FIELD
     
     class Meta:
         model = Exam
@@ -26,7 +29,31 @@ class ExamSerializer(serializers.ModelSerializer):
         return obj.course.course_code
     
     def get_attempt_count(self, obj):
+        """Count attempts ONLY for the current student if they are a student."""
+        request = self.context.get('request')
+        if request and request.user.is_authenticated and request.user.role == 'STUDENT':
+            try:
+                student = request.user.student_profile
+                return obj.attempts.filter(student=student).count()
+            except:
+                return 0
+        # For teachers/admins, show total attempts
         return obj.attempts.count()
+
+    def get_is_taken(self, obj):
+        """Check if the CURRENT student has already taken this exam."""
+        request = self.context.get('request')
+        if request and request.user.is_authenticated and request.user.role == 'STUDENT':
+            try:
+                student = request.user.student_profile
+                return obj.attempts.filter(
+                    student=student,
+                    status__in=['IN_PROGRESS', 'SUBMITTED', 'GRADED']
+                ).exists()
+            except:
+                return False
+        return False
+
 
 class ExamAttemptSerializer(serializers.ModelSerializer):
     student_name = serializers.SerializerMethodField()
@@ -51,7 +78,6 @@ class ExamAttemptSerializer(serializers.ModelSerializer):
     def get_course_title(self, obj):
         return obj.exam.course.title
 
-# exams/serializers.py - ADD THIS SERIALIZER
 
 class FinalExamSerializer(serializers.ModelSerializer):
     course_title = serializers.SerializerMethodField()
@@ -77,4 +103,4 @@ class FinalExamSerializer(serializers.ModelSerializer):
         return obj.course.department.name if obj.course and obj.course.department else None
     
     def get_created_by_name(self, obj):
-        return obj.created_by.full_name if obj.created_by else None        
+        return obj.created_by.full_name if obj.created_by else None

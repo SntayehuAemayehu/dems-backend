@@ -24,9 +24,17 @@ logger = logging.getLogger(__name__)
 # EXISTING VIEWS - PRESERVED
 # ============================================================
 
+# exams/views.py
+
 class ExamListView(generics.ListCreateAPIView):
     serializer_class = ExamSerializer
     permission_classes = [permissions.IsAuthenticated]
+    
+    # ✅ FIX: Pass request context to serializer so is_taken works correctly
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
     
     def get_queryset(self):
         user = self.request.user
@@ -210,14 +218,73 @@ class QuestionView(generics.ListCreateAPIView):
         self.perform_create(serializer)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+# exams/views.py
 
 class QuestionDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Question.objects.all()
     serializer_class = QuestionSerializer
     permission_classes = [permissions.IsAuthenticated]
     
+    # ✅ ALLOW TEACHERS TO UPDATE QUESTIONS
+    def update(self, request, *args, **kwargs):
+        question = self.get_object()
+        
+        # Permission check
+        if request.user.role != 'ADMIN' and question.exam.created_by != request.user:
+            return Response(
+                {'error': 'You do not have permission to update this question'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+            
+        data = request.data.copy()
+        question_type = data.get('type', question.type)
+        
+        # Validate and format MCQ options
+        if question_type == 'MCQ':
+            options = data.get('options', [])
+            if isinstance(options, dict):
+                options = [v for v in options.values() if v and v.strip()]
+            elif isinstance(options, list):
+                options = [v for v in options if v and v.strip()]
+                
+            if len(options) < 2:
+                return Response(
+                    {'error': 'MCQ questions must have at least 2 options'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            data['options'] = options
+            
+            if not data.get('correct_answer'):
+                return Response(
+                    {'error': 'MCQ questions must have a correct answer selected'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+                
+        elif question_type == 'TF':
+            if not data.get('correct_answer'):
+                return Response(
+                    {'error': 'True/False questions must have a correct answer'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            data['options'] = [] # Clear options for TF
+            
+        elif question_type == 'SHORT':
+            data['correct_answer'] = ''
+            data['options'] = []
+
+        # Perform partial update (PATCH) or full update (PUT)
+        partial = kwargs.pop('partial', False)
+        serializer = self.get_serializer(question, data=data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        
+        return Response(serializer.data)
+
+    # ✅ ALLOW TEACHERS TO DELETE QUESTIONS
     def destroy(self, request, *args, **kwargs):
         question = self.get_object()
+        
+        # Permission check
         if request.user.role != 'ADMIN' and question.exam.created_by != request.user:
             return Response(
                 {'error': 'You do not have permission to delete this question'},
@@ -225,6 +292,7 @@ class QuestionDetailView(generics.RetrieveUpdateDestroyAPIView):
             )
         question.delete()
         return Response({'message': 'Question deleted successfully'}, status=status.HTTP_200_OK)
+
 
 
 class StartExamView(APIView):
@@ -1164,6 +1232,7 @@ class EditAnswerView(APIView):
 # ============================================================
 # EXAM SECURITY - COMPLETE HEARTBEAT WITH AI ANALYSIS
 # ============================================================
+# exams/views.py
 
 from .trust_engine import TrustEngine
 
@@ -1171,6 +1240,7 @@ class ExamHeartbeatView(APIView):
     """
     Receive heartbeat. Server computes trust from raw signals.
     CLIENT'S trust_score IS IGNORED.
+    Also handles real-time multiple-face locking.
     """
     permission_classes = [permissions.IsAuthenticated]
 
@@ -1181,25 +1251,60 @@ class ExamHeartbeatView(APIView):
             return Response({'error': 'Attempt not found'}, status=404)
 
         # ============================================================
-        # SERVER-SIDE SIGNALS (not trusted from client)
+        # 1. CHECK FOR MULTIPLE FACES FIRST (Immediate Lock)
+        # ============================================================
+        multiple_faces = request.data.get('multiple_faces', False)
+        face_count = request.data.get('face_count', 0)
+
+        if multiple_faces or face_count > 1:
+            attempt.suspicious_events_count += 1
+            attempt.save()
+            
+            return Response({
+                'status': 'locked',
+                'is_locked': True,
+                'lock_reason': f'Multiple faces detected ({face_count}). Please ensure only one person is visible.',
+                'requires_recheck': True,  # Tells frontend this is a temporary lock
+                'trust_score': 0,
+                'suspicion_score': 100,
+                'risk_level': 'CRITICAL',
+                'is_flagged': attempt.ai_flagged,
+                'time_since_last_heartbeat': 0,
+            })
+
+        # ============================================================
+        # 2. CHECK IF ALREADY PERMANENTLY LOCKED
+        # ============================================================
+        if attempt.is_locked:
+            return Response({
+                'status': 'locked',
+                'is_locked': True,
+                'lock_reason': attempt.lock_reason or 'Exam locked by system.',
+                'requires_recheck': False,  # Permanent lock
+                'trust_score': 0,
+                'suspicion_score': 100,
+                'risk_level': 'CRITICAL',
+                'is_flagged': True,
+                'time_since_last_heartbeat': 0,
+            })
+
+        # ============================================================
+        # 3. NORMAL TRUST ENGINE PROCESSING (If 1 face, no lock)
         # ============================================================
         engine = TrustEngine(attempt)
-
-        # 1. Record heartbeat (detects regularity server-side)
         hb_result = engine.record_heartbeat(request.data)
 
-        # 2. Increment tab switches (server-side counter)
-        # Client sends "increment_by", we cap it
+        # Tab switches (server-side counter)
         increment = min(int(request.data.get('tab_switch_increment', 0)), 1)
         if increment:
             attempt.tab_switch_count = (attempt.tab_switch_count or 0) + increment
 
-        # 3. Fullscreen exits
+        # Fullscreen exits
         fs_increment = min(int(request.data.get('fullscreen_exit_increment', 0)), 1)
         if fs_increment:
             attempt.fullscreen_exit_count = (attempt.fullscreen_exit_count or 0) + fs_increment
 
-        # 4. Record raw signals to history (server-side)
+        # Network latency history
         latency = request.data.get('network_latency')
         if latency is not None:
             try:
@@ -1211,7 +1316,7 @@ class ExamHeartbeatView(APIView):
             except (ValueError, TypeError):
                 pass
 
-        # 5. Compute trust SERVER-SIDE
+        # Compute trust SERVER-SIDE
         result = engine.save_trust_to_attempt()
 
         # Log if flagged
@@ -1230,17 +1335,288 @@ class ExamHeartbeatView(APIView):
             except Exception as e:
                 logger.warning(f"Could not log flag: {e}")
 
+        # Return OK status (Unlocks frontend if it was previously locked by multiple faces)
         return Response({
             'status': 'ok',
+            'is_locked': attempt.is_locked,  # False normally, True only if TrustEngine decided to lock permanently
+            'lock_reason': attempt.lock_reason if attempt.is_locked else None,
+            'requires_recheck': False if attempt.is_locked else True,
             'trust_score': result['trust_score'],
             'suspicion_score': result['suspicion_score'],
             'risk_level': result['risk_level'],
             'is_flagged': attempt.ai_flagged,
-            'is_locked': attempt.is_locked,
-            'lock_reason': attempt.lock_reason if attempt.is_locked else None,
             'time_since_last_heartbeat': hb_result['time_since_last'],
         })
+
+        
+# exams/views.py — REPLACE the entire FaceVerificationView class
+
 class FaceVerificationView(APIView):
+    """
+    Verify student's face with combined frontend + backend detection
+    AND real identity match against the enrolled face_embedding.
+
+    POST /api/exams/attempt/<attempt_id>/face-verify/
+
+    ✅ PRESERVED:
+        - Frontend face detection signals (face_data)
+        - Backend OpenCV Haar cascade detection
+        - Combined verification logic
+        - Multiple-face detection
+        - ExamAttempt flagging
+
+    ✅ ADDED:
+        - Real identity comparison via accounts.face_service.verify_against_reference
+        - Auto-flag at 3 identity failures
+        - Auto-lock at 5 identity failures
+        - Reset failure counter on success
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, attempt_id):
+        from accounts.face_service import verify_against_reference
+
+        # ============================================================
+        # 0. LOAD ATTEMPT
+        # ============================================================
+        try:
+            attempt = ExamAttempt.objects.get(
+                id=attempt_id, student__user=request.user
+            )
+        except ExamAttempt.DoesNotExist:
+            return Response(
+                {'error': 'Attempt not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        image_data = request.data.get('image_data')
+        face_data = request.data.get('face_data', {})
+
+        if not image_data:
+            return Response({
+                'verified': False,
+                'error': 'Image data required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        student = attempt.student
+
+        # ============================================================
+        # 0b. MUST BE ENROLLED
+        # ============================================================
+        if not student.face_enrolled or not student.face_embedding:
+            return Response({
+                'verified': False,
+                'error': 'Face not enrolled. Please enroll your face first.',
+                'needs_enrollment': True,
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # ============================================================
+        # 1. FRONTEND FACE DETECTION
+        # ============================================================
+        frontend_face_detected = face_data.get('face_detected', False)
+        frontend_confidence = face_data.get('confidence', 0)
+        frontend_face_count = face_data.get('face_count', 0)
+        frontend_multiple_faces = face_data.get('multiple_faces', False)
+
+        # ============================================================
+        # 2. BACKEND OPENCV FACE DETECTION  (PRESERVED)
+        # ============================================================
+        backend_face_detected = False
+        backend_face_count = 0
+        backend_confidence = 0
+
+        try:
+            import cv2
+            import base64
+            import numpy as np
+
+            # ✅ Use a local copy so we don't mutate the original string
+            cleaned_image_data = image_data
+            if ',' in cleaned_image_data:
+                cleaned_image_data = cleaned_image_data.split(',')[1]
+
+            image_bytes = base64.b64decode(cleaned_image_data)
+            np_arr = np.frombuffer(image_bytes, np.uint8)
+            image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+            if image is not None:
+                face_cascade = cv2.CascadeClassifier(
+                    cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+                )
+                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+                faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+
+                backend_face_count = len(faces)
+                backend_face_detected = backend_face_count > 0
+                backend_confidence = 0.85 if backend_face_detected else 0
+
+                print(f"🔍 OpenCV detected {backend_face_count} face(s) in FaceVerificationView")
+
+        except Exception as e:
+            # OpenCV failed → fall back to frontend results (preserved behavior)
+            print(f"OpenCV error in FaceVerificationView: {e}")
+            backend_face_detected = frontend_face_detected
+            backend_face_count = frontend_face_count
+            backend_confidence = frontend_confidence
+
+        # ============================================================
+        # 3. COMBINED VERIFICATION  (PRESERVED)
+        # ============================================================
+        face_verified = False
+        final_confidence = 0
+
+        if frontend_face_detected and backend_face_detected:
+            face_verified = True
+            final_confidence = (frontend_confidence + backend_confidence) / 2
+        elif frontend_face_detected:
+            face_verified = True
+            final_confidence = frontend_confidence * 0.8
+        elif backend_face_detected:
+            face_verified = True
+            final_confidence = backend_confidence * 0.8
+
+        # ============================================================
+        # 4. CHECK FOR MULTIPLE FACES  (PRESERVED)
+        # ============================================================
+        if frontend_multiple_faces or frontend_face_count > 1 or backend_face_count > 1:
+            attempt.suspicious_events_count += 1
+            attempt.ai_flagged = True
+            attempt.ai_flag_reason = "Multiple faces detected"
+            attempt.save()
+
+            return Response({
+                'verified': False,
+                'error': 'Multiple faces detected',
+                'is_flagged': True
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # ============================================================
+        # 5. ✅ NEW: REAL IDENTITY MATCH
+        #    Only run if we actually detected exactly one face.
+        # ============================================================
+        identity_verified = False
+        identity_confidence = 0.0
+        identity_error = None
+
+        if face_verified and backend_face_count == 1:
+            try:
+                id_result = verify_against_reference(
+                    image_data,
+                    student.face_embedding
+                )
+                identity_verified = bool(id_result.get('verified', False))
+                identity_confidence = float(id_result.get('confidence', 0) or 0)
+                identity_error = id_result.get('error')
+                print(
+                    f"🔐 Identity check: verified={identity_verified}, "
+                    f"confidence={identity_confidence:.2f}"
+                )
+            except Exception as e:
+                print(f"❌ Identity check error: {e}")
+                identity_error = str(e)
+
+        # ============================================================
+        # 6. FINAL VERIFICATION (identity now required)
+        # ============================================================
+        if face_verified and final_confidence > 0.4 and identity_verified:
+            # ✅ PASS — same person as the enrolled student
+            attempt.face_verified = True
+            attempt.face_match_confidence = identity_confidence
+            attempt.save()
+
+            # Reset failure counter on success
+            student.face_verification_failures = 0
+            student.face_last_verified_at = timezone.now()
+            student.save(update_fields=[
+                'face_verification_failures',
+                'face_last_verified_at'
+            ])
+
+            return Response({
+                'verified': True,
+                'confidence': identity_confidence,
+                'detection_confidence': final_confidence,
+                'identity_confidence': identity_confidence,
+                'frontend_detected': frontend_face_detected,
+                'backend_detected': backend_face_detected,
+                'is_flagged': False,
+                'message': 'Face verified (detection + identity)'
+            })
+
+        # ============================================================
+        # 7. ❌ IDENTITY MISMATCH — flag / lock the attempt
+        # ============================================================
+        if face_verified and backend_face_count == 1 and not identity_verified:
+            student.face_verification_failures = (
+                student.face_verification_failures or 0
+            ) + 1
+            student.save(update_fields=['face_verification_failures'])
+
+            is_flagged = False
+            is_locked = False
+
+            attempt.face_verified = False
+            attempt.face_match_confidence = identity_confidence
+            attempt.suspicious_events_count += 1
+
+            if student.face_verification_failures >= 3:
+                attempt.ai_flagged = True
+                attempt.ai_flag_reason = (
+                    f"Face identity mismatch x"
+                    f"{student.face_verification_failures}"
+                )
+                attempt.status = 'FLAGGED'
+                is_flagged = True
+
+            if student.face_verification_failures >= 5:
+                attempt.is_locked = True
+                attempt.lock_reason = "Face verification failed 5 times"
+                is_locked = True
+
+            attempt.save()
+
+            # Notify admin on flag
+            if is_flagged:
+                try:
+                    send_notification(
+                        recipient_roles=['ADMIN'],
+                        title='🚨 Face Identity Mismatch',
+                        message=(
+                            f"Student {student.user.full_name} failed face "
+                            f"identity verification "
+                            f"{student.face_verification_failures} times "
+                            f"during exam {attempt.exam.title}."
+                        ),
+                        notification_type='SYSTEM_ALERT',
+                        link='/admin/proctoring-review'
+                    )
+                except Exception as e:
+                    print(f"⚠️ Notification failed: {e}")
+
+            return Response({
+                'verified': False,
+                'error': identity_error or 'Face does not match enrolled student',
+                'detection_confidence': final_confidence,
+                'identity_confidence': identity_confidence,
+                'frontend_detected': frontend_face_detected,
+                'backend_detected': backend_face_detected,
+                'is_flagged': is_flagged,
+                'is_locked': is_locked,
+                'failure_count': student.face_verification_failures,
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # ============================================================
+        # 8. VERIFICATION FAILED (no face / low confidence)  (PRESERVED)
+        # ============================================================
+        return Response({
+            'verified': False,
+            'error': 'Face verification failed',
+            'frontend_detected': frontend_face_detected,
+            'backend_detected': backend_face_detected,
+            'frontend_confidence': frontend_confidence,
+            'backend_confidence': backend_confidence,
+            'is_flagged': False
+        }, status=status.HTTP_400_BAD_REQUEST)
     """
     Verify student's face with combined frontend + backend detection
     POST /api/exams/attempt/<attempt_id>/face-verify/
@@ -1400,167 +1776,220 @@ class ObjectDetectionView(APIView):
         return Response(result)  
  # exams/views.py - ADD THIS VIEW
 
+# exams/views.py — REPLACE the entire VerifyFaceView class
+
 class VerifyFaceView(APIView):
     """
-    Combined face verification: Frontend + Backend (OpenCV)
+    Face verification: Frontend + Backend (OpenCV) + IDENTITY MATCH.
+
     POST /api/exams/verify-face/
+
+    Requirements (all three must pass):
+      1. Frontend detected a face
+      2. OpenCV backend detected exactly ONE face
+      3. Live image identity-matches the enrolled student's face_embedding
     """
     permission_classes = [permissions.IsAuthenticated]
-    
+
     def post(self, request):
+        from accounts.face_service import verify_against_reference
+        from accounts.models import StudentProfile
+
         image_data = request.data.get('image_data')
         exam_id = request.data.get('exam_id')
         face_data = request.data.get('face_data', {})
-        
-        # ============================================================
-        # 1. GET FRONTEND FACE DETECTION RESULTS
-        # ============================================================
-        frontend_face_detected = face_data.get('face_detected', False)
-        frontend_confidence = face_data.get('confidence', 0)
-        frontend_face_count = face_data.get('face_count', 0)
-        frontend_multiple_faces = face_data.get('multiple_faces', False)
-        
+
+        # ---------- 1. Input ----------
         if not image_data:
+            return Response(
+                {'verified': False, 'error': 'Image data is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # ---------- 2. Frontend signals ----------
+        frontend_face_detected = bool(face_data.get('face_detected', False))
+        frontend_face_count = int(face_data.get('face_count', 0) or 0)
+        frontend_multiple_faces = bool(face_data.get('multiple_faces', False))
+
+        # ---------- 3. Student + enrollment ----------
+        try:
+            student = StudentProfile.objects.get(user=request.user)
+        except StudentProfile.DoesNotExist:
+            return Response(
+                {'verified': False, 'error': 'Student profile not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if not student.face_enrolled or not student.face_embedding:
             return Response({
                 'verified': False,
-                'error': 'Image data is required'
+                'error': 'Face not enrolled.',
+                'needs_enrollment': True,
             }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # ============================================================
-        # 2. BACKEND OPENCV FACE DETECTION
-        # ============================================================
+
+        # ---------- 4. Backend OpenCV detection (fail-closed) ----------
         backend_face_detected = False
         backend_face_count = 0
-        backend_confidence = 0
-        
+
         try:
             import cv2
             import base64
             import numpy as np
-            
-            # Decode base64 image
-            if ',' in image_data:
-                image_data = image_data.split(',')[1]
-            
-            image_bytes = base64.b64decode(image_data)
+
+            cleaned = image_data.split(',')[1] if ',' in image_data else image_data
+            image_bytes = base64.b64decode(cleaned)
             np_arr = np.frombuffer(image_bytes, np.uint8)
             image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-            
-            if image is not None:
-                # Detect faces using OpenCV
-                face_cascade = cv2.CascadeClassifier(
-                    cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-                )
-                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-                faces = face_cascade.detectMultiScale(gray, 1.1, 4)
-                
-                backend_face_count = len(faces)
-                backend_face_detected = backend_face_count > 0
-                backend_confidence = 0.85 if backend_face_detected else 0
-                
-                print(f"🔍 OpenCV detected {backend_face_count} face(s)")
-                
+
+            if image is None:
+                return Response({
+                    'verified': False,
+                    'error': 'Could not decode image',
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            cascade = cv2.CascadeClassifier(
+                cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+            )
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            faces = cascade.detectMultiScale(gray, 1.1, 4)
+
+            backend_face_count = len(faces)
+            backend_face_detected = backend_face_count > 0
+            print(f"🔍 OpenCV detected {backend_face_count} face(s)")
+
+        except ImportError as e:
+            # Not supposed to happen — opencv is installed
+            logger.error(f"OpenCV import failed: {e}")
+            return Response({
+                'verified': False,
+                'error': 'Server face detection unavailable.',
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
         except Exception as e:
-            # OpenCV failed - fallback to frontend results
-            print(f"⚠️ OpenCV error: {e}")
-            backend_face_detected = frontend_face_detected
-            backend_face_count = frontend_face_count
-            backend_confidence = frontend_confidence
-        
-        # ============================================================
-        # 3. COMBINED VERIFICATION
-        # ============================================================
-        face_verified = False
-        final_face_count = 0
-        final_confidence = 0
-        
-        if frontend_face_detected and backend_face_detected:
-            # ✅ Both detected a face - HIGHEST SECURITY
-            face_verified = True
-            final_face_count = max(frontend_face_count, backend_face_count)
-            final_confidence = (frontend_confidence + backend_confidence) / 2
-            print("✅ Face verified by BOTH frontend and backend")
-            
-        elif frontend_face_detected and not backend_face_detected:
-            # Only frontend detected a face - MEDIUM SECURITY (OpenCV fallback)
-            face_verified = True
-            final_face_count = frontend_face_count
-            final_confidence = frontend_confidence * 0.8
-            print("⚠️ Using frontend-only face detection (OpenCV fallback)")
-            
-        elif backend_face_detected and not frontend_face_detected:
-            # Only backend detected a face - Should not happen, but accept
-            face_verified = True
-            final_face_count = backend_face_count
-            final_confidence = backend_confidence * 0.8
-            print("⚠️ Using backend-only face detection")
-            
-        else:
-            # Neither detected a face
-            face_verified = False
-            final_face_count = 0
-            final_confidence = 0
-            print("❌ No face detected by either frontend or backend")
-        
-        # ============================================================
-        # 4. CHECK FOR MULTIPLE FACES
-        # ============================================================
-        if frontend_multiple_faces or frontend_face_count > 1 or backend_face_count > 1:
+            logger.error(f"OpenCV error: {e}")
+            return Response({
+                'verified': False,
+                'error': f'Face detection error: {e}',
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # ---------- 5. Multiple faces → hard fail ----------
+        if (frontend_multiple_faces
+                or frontend_face_count > 1
+                or backend_face_count > 1):
             if exam_id:
                 try:
                     attempt = ExamAttempt.objects.get(id=exam_id)
                     attempt.suspicious_events_count += 1
                     attempt.ai_flagged = True
-                    attempt.ai_flag_reason = f"Multiple faces detected (Frontend: {frontend_face_count}, Backend: {backend_face_count})"
+                    attempt.ai_flag_reason = (
+                        f"Multiple faces detected "
+                        f"(F:{frontend_face_count}, B:{backend_face_count})"
+                    )
                     attempt.save()
-                except:
+                except ExamAttempt.DoesNotExist:
                     pass
-            
             return Response({
                 'verified': False,
-                'error': f'Multiple faces detected',
+                'error': 'Multiple faces detected',
                 'frontend_face_count': frontend_face_count,
                 'backend_face_count': backend_face_count,
                 'is_flagged': True,
-                'flag_reason': f'Multiple faces detected'
             }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # ============================================================
-        # 5. FINAL VERIFICATION
-        # ============================================================
-        if face_verified and final_face_count == 1 and final_confidence > 0.4:
-            if exam_id:
-                try:
-                    attempt = ExamAttempt.objects.get(id=exam_id)
-                    attempt.face_verified = True
-                    attempt.face_match_confidence = final_confidence
-                    attempt.save()
-                    print(f"✅ Attempt {exam_id} face verified with confidence {final_confidence}")
-                except Exception as e:
-                    print(f"⚠️ Could not update attempt: {e}")
-            
+
+        # ---------- 6. Require BOTH detectors to see a face ----------
+        detection_ok = (
+            frontend_face_detected
+            and backend_face_detected
+            and backend_face_count == 1
+        )
+
+        if not detection_ok:
             return Response({
-                'verified': True,
-                'confidence': final_confidence,
-                'face_count': final_face_count,
+                'verified': False,
+                'error': 'Face not detected by both frontend and backend.',
                 'frontend_detected': frontend_face_detected,
                 'backend_detected': backend_face_detected,
+                'backend_face_count': backend_face_count,
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # ---------- 7. ✅ Real identity match (dlib / face_recognition) ----------
+        try:
+            id_result = verify_against_reference(
+                image_data, student.face_embedding
+            )
+        except Exception as e:
+            logger.error(f"Identity check error: {e}")
+            return Response({
+                'verified': False,
+                'error': f'Identity check error: {e}',
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        identity_verified = bool(id_result.get('verified', False))
+        identity_confidence = float(id_result.get('confidence', 0) or 0)
+
+        # ---------- 8. Persist + escalate ----------
+        is_flagged = False
+        is_locked = False
+
+        if exam_id:
+            try:
+                attempt = ExamAttempt.objects.get(id=exam_id)
+                attempt.face_verified = identity_verified
+                attempt.face_match_confidence = identity_confidence
+
+                if not identity_verified:
+                    attempt.suspicious_events_count += 1
+                    student.face_verification_failures = (
+                        student.face_verification_failures or 0
+                    ) + 1
+                    student.save(update_fields=['face_verification_failures'])
+
+                    if student.face_verification_failures >= 3:
+                        attempt.ai_flagged = True
+                        attempt.ai_flag_reason = (
+                            f"Face identity mismatch x"
+                            f"{student.face_verification_failures}"
+                        )
+                        attempt.status = 'FLAGGED'
+                        is_flagged = True
+
+                    if student.face_verification_failures >= 5:
+                        attempt.is_locked = True
+                        attempt.lock_reason = "Face verification failed 5 times"
+                        is_locked = True
+                else:
+                    student.face_verification_failures = 0
+                    student.face_last_verified_at = timezone.now()
+                    student.save(update_fields=[
+                        'face_verification_failures',
+                        'face_last_verified_at',
+                    ])
+
+                attempt.save()
+            except ExamAttempt.DoesNotExist:
+                pass
+
+        # ---------- 9. Response ----------
+        if identity_verified:
+            return Response({
+                'verified': True,
+                'confidence': identity_confidence,
+                'face_count': 1,
+                'frontend_detected': True,
+                'backend_detected': True,
                 'is_flagged': False,
-                'message': 'Face verified successfully (combined detection)'
+                'message': 'Face verified (frontend + OpenCV + identity)',
             })
-        
-        # ============================================================
-        # 6. VERIFICATION FAILED
-        # ============================================================
+
         return Response({
             'verified': False,
-            'error': 'Face verification failed',
+            'error': id_result.get('error') or 'Face does not match enrolled student',
+            'identity_confidence': identity_confidence,
             'frontend_detected': frontend_face_detected,
             'backend_detected': backend_face_detected,
-            'frontend_confidence': frontend_confidence,
-            'backend_confidence': backend_confidence,
-            'face_count': final_face_count,
-            'is_flagged': False
+            'is_flagged': is_flagged,
+            'is_locked': is_locked,
+            'failure_count': student.face_verification_failures,
         }, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -1715,3 +2144,85 @@ class VerifyFaceIdentityView(APIView):
     def post(self, request):
         from accounts.views import VerifyFaceAtExamView
         return VerifyFaceAtExamView().post(request)
+# exams/views.py — add this class
+from accounts.face_service import extract_face_embedding
+import face_recognition
+import numpy as np
+import base64
+from io import BytesIO
+from PIL import Image
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import permissions
+
+class CountFacesView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        image_data = request.data.get('image_data')
+        if not image_data:
+            return Response({'face_count': 0, 'error': 'No image'}, status=400)
+        
+        try:
+            # Decode image
+            if ',' in image_data:
+                image_data = image_data.split(',')[1]
+            image_bytes = base64.b64decode(image_data)
+            pil = Image.open(BytesIO(image_bytes)).convert('RGB')
+            np_image = np.array(pil, dtype=np.uint8)
+
+            # Count faces using HOG
+            face_locations = face_recognition.face_locations(np_image, number_of_times_to_upsample=1, model='hog')
+            count = len(face_locations)
+
+            return Response({'face_count': count})
+        except Exception as e:
+            return Response({'face_count': 0, 'error': str(e)}, status=200)
+
+# In exams/views.py or analytics/views.py
+class UpcomingExamWarningsView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        if request.user.role != 'STUDENT':
+            return Response([])
+            
+        student = request.user.student_profile
+        
+        # Check if student has profile picture
+        has_photo = bool(request.user.profile_picture)
+        
+        # Get exams starting in the next 7 days
+        from exams.models import Exam
+        from django.utils import timezone
+        import datetime
+        
+        upcoming_exams = Exam.objects.filter(
+            course__in=student.enrollments.filter(status='ACTIVE').values('course'),
+            start_time__gte=timezone.now(),
+            start_time__lte=timezone.now() + datetime.timedelta(days=7)
+        )
+        
+        warnings = []
+        if not has_photo:
+            warnings.append({
+                'type': 'MISSING_PROFILE_PHOTO',
+                'message': 'You have upcoming exams but no profile photo. Please upload one immediately.',
+                'action_url': '/profile'
+            })
+            
+        if not student.face_enrolled:
+            warnings.append({
+                'type': 'MISSING_FACE_ENROLLMENT',
+                'message': 'You have not enrolled your face. Please do so before your exam.',
+                'action_url': '/enroll-face'
+            })
+            
+        return Response({
+            'has_profile_photo': has_photo,
+            'face_enrolled': student.face_enrolled,
+            'upcoming_exams_count': upcoming_exams.count(),
+            'warnings': warnings
+        })
+
+

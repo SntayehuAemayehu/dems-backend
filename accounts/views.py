@@ -385,6 +385,8 @@ class LoginView(APIView):
         if x_forwarded_for:
             return x_forwarded_for.split(',')[0].strip()
         return request.META.get('REMOTE_ADDR', '')
+
+
 class UserProfileView(generics.RetrieveUpdateAPIView):
     serializer_class = UserSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -394,24 +396,77 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
     
     def patch(self, request, *args, **kwargs):
         user = self.get_object()
-        allowed_fields = ['full_name', 'phone', 'profile_picture']
+        allowed_fields = ['full_name', 'phone']
         data = {k: v for k, v in request.data.items() if k in allowed_fields and v != ''}
         
+        # ✅ HANDLE PROFILE PICTURE & FACE EXTRACTION
         if 'profile_picture' in request.FILES:
-            user.profile_picture = request.FILES['profile_picture']
+            uploaded_file = request.FILES['profile_picture']
+            
+            try:
+                # 1. Read file bytes
+                uploaded_file.seek(0)
+                image_bytes = uploaded_file.read()
+                
+                # 2. Convert to base64 for the AI service
+                base64_image = base64.b64encode(image_bytes).decode('utf-8')
+                image_data = f"data:image/jpeg;base64,{base64_image}"
+                
+                # 3. Extract face embedding using your face_service
+                result = extract_face_embedding(image_data)
+                
+                if not result.get('success'):
+                    return Response({
+                        'error': 'Face Extraction Failed',
+                        'message': result.get('error', 'No clear face detected. Please upload a clear, front-facing photo.'),
+                        'face_count': result.get('face_count', 0)
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                if result.get('face_count', 0) > 1:
+                    return Response({
+                        'error': 'Multiple Faces Detected',
+                        'message': 'Please ensure only YOUR face is in the photo. Do not upload group photos.'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+                # 4. Save the image to User model
+                user.profile_picture = uploaded_file
+                user.save()
+                
+                # 5. Save the embedding to StudentProfile
+                if hasattr(user, 'student_profile'):
+                    student = user.student_profile
+                    student.face_embedding = result['embedding']
+                    student.face_enrolled = True
+                    student.face_enrolled_at = timezone.now()
+                    student.face_verification_failures = 0  # Reset failures on new photo
+                    student.profile_photo_updated_at = timezone.now()
+                    
+                    # Save reference image copy for admin review
+                    uploaded_file.seek(0)
+                    student.face_reference_image.save(
+                        f"face_ref_{user.id}_{timezone.now().strftime('%Y%m%d%H%M%S')}.jpg",
+                        ContentFile(uploaded_file.read()),
+                        save=False
+                    )
+                    student.save()
+                    
+                    logger.info(f"✅ Face embedding updated for user {user.email}")
+                
+            except Exception as e:
+                logger.error(f"Profile picture processing error: {e}")
+                return Response({
+                    'error': 'Profile Picture Error',
+                    'message': 'Could not process the image. Please try again.'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # ✅ UPDATE TEXT FIELDS
+        if data:
+            for key, value in data.items():
+                setattr(user, key, value)
             user.save()
-            data.pop('profile_picture', None)
         
-        if not data:
-            return Response({'message': 'No fields to update'}, status=status.HTTP_200_OK)
-        
-        serializer = self.get_serializer(user, data=data, partial=True)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
-        serializer.save()
         return Response({
-            'message': 'Profile updated successfully',
+            'message': 'Profile updated successfully and face identity secured.',
             'user': UserSerializer(user).data
         }, status=status.HTTP_200_OK)
 
@@ -4551,7 +4606,7 @@ class FaceEnrollmentView(APIView):
                 'success': False,
                 'error': 'Face is already enrolled. Only an administrator can reset it.',
                 'already_enrolled': True,
-                'enrolled_at': student.face_enrolled_at.isoformat() if student.face_enrolled_at else None,
+                #'enrolled_at': student.face_enrolled_at.isoformat() if student.face_enrolled_at else None,
             }, status=status.HTTP_400_BAD_REQUEST)
 
         # --------------------------------------------------------
@@ -4648,80 +4703,44 @@ class FaceEnrollmentStatusView(APIView):
             })
 
 
+# accounts/views.py — REPLACE VerifyFaceAtExamView
+
 class VerifyFaceAtExamView(APIView):
-    """
-    Verify student face at exam start.
-    POST /api/exams/verify-face-identity/
-    Body: { "image_data": "...", "attempt_id": 123 }
-    """
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
         from exams.models import ExamAttempt
+        from accounts.face_service import verify_against_reference
 
         image_data = request.data.get('image_data')
         attempt_id = request.data.get('attempt_id')
 
         if not image_data:
-            return Response(
-                {'error': 'image_data is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({'verified': False, 'error': 'image_data is required'}, status=400)
 
-        # Get student
         try:
             student = request.user.student_profile
         except Exception:
-            return Response(
-                {'error': 'Student profile not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+            return Response({'verified': False, 'error': 'Student profile not found'}, status=404)
 
-        # Check enrollment
         if not student.face_enrolled or not student.face_embedding:
-            return Response({
-                'verified': False,
-                'error': 'Face not enrolled. Please enroll first.',
-                'needs_enrollment': True
-            }, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'verified': False, 'error': 'Face not enrolled', 'needs_enrollment': True}, status=400)
 
-        # Verify
         result = verify_against_reference(image_data, student.face_embedding)
 
-        # Update attempt with verification result
-        if attempt_id:
-            try:
-                attempt = ExamAttempt.objects.get(
-                    id=attempt_id,
-                    student=student
-                )
-                attempt.face_verified = result['verified']
-                attempt.face_match_confidence = result['confidence']
-
-                if not result['verified']:
-                    attempt.suspicious_events_count += 1
-                    student.face_verification_attempts += 1
-
-                    # Lock if too many failures
-                    if student.face_verification_attempts >= 5:
-                        attempt.is_locked = True
-                        attempt.lock_reason = 'Face verification failed 5 times'
-
-                attempt.save()
-                student.last_face_verification = timezone.now()
-                student.save()
-
-            except ExamAttempt.DoesNotExist:
-                pass
-
+        if result['verified']:
+            return Response({
+                'verified': True,
+                'confidence': result['confidence'],
+                'message': 'Identity verified'
+            }, status=200)
+        
         return Response({
-            'verified': result['verified'],
-            'confidence': result['confidence'],
-            'face_detected': result['face_detected'],
-            'multiple_faces': result['multiple_faces'],
-            'error': result.get('error')
-        }, status=status.HTTP_200_OK if result['verified'] else status.HTTP_400_BAD_REQUEST)           
-# accounts/views.py
+            'verified': False,
+            'error': result.get('error'),
+            'multiple_faces': result.get('multiple_faces', False)
+        }, status=400)
+        
 class AdminResetFaceView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 

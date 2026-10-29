@@ -4,6 +4,7 @@ from django.urls import path
 from . import views
 from accounts.views import VerifyFaceAtExamView
 from .views import VerifyFaceIdentityView
+from .views import CountFacesView
 urlpatterns = [
     # Exam CRUD
     path('', views.ExamListView.as_view(), name='exams'),
@@ -45,6 +46,7 @@ urlpatterns = [
     path('attempt/<int:attempt_id>/recording/', views.ExamRecordingUploadView.as_view(), name='exam-recording'),
     path('attempt/<int:attempt_id>/recordings/', views.ExamRecordingListView.as_view(), name='exam-recordings-list'),
     path('attempt/<int:attempt_id>/env-check/', views.EnvironmentCheckView.as_view(), name='env-check'),
+    path('count-faces/', CountFacesView.as_view(), name='count-faces'),
     # ... existing paths ...
 
 ]

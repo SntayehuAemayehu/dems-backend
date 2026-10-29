@@ -29,9 +29,10 @@ class LiveClassConsumer(AsyncWebsocketConsumer):
             await self.close()
             return
         
-        # For testing, allow any authenticated user to join
-        # In production, uncomment the permission checks below
-        
+        # ✅ NEW: Set course live if user is teacher
+        if self.user.role == 'TEACHER':
+            await self.set_course_live(True)
+
         # Add to group
         await self.channel_layer.group_add(
             self.room_group_name,
@@ -54,6 +55,10 @@ class LiveClassConsumer(AsyncWebsocketConsumer):
     async def disconnect(self, close_code):
         print(f"🔌 WebSocket Disconnected: User {self.user.full_name} left live class {self.course_id}")
         
+        # ✅ NEW: Set course offline if user is teacher
+        if self.user.is_authenticated and self.user.role == 'TEACHER':
+            await self.set_course_live(False)
+
         try:
             await self.channel_layer.group_send(
                 self.room_group_name,
@@ -175,6 +180,14 @@ class LiveClassConsumer(AsyncWebsocketConsumer):
     
     # ========== DATABASE HELPERS ==========
     
+    @database_sync_to_async
+    def set_course_live(self, is_live):
+        from courses.models import Course
+        try:
+            Course.objects.filter(id=self.course_id).update(is_live=is_live)
+        except Exception as e:
+            print(f"Error updating course live status: {e}")
+
     @database_sync_to_async
     def check_enrollment(self):
         from courses.models import Course, Enrollment
