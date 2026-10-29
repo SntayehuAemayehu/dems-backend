@@ -2,7 +2,7 @@
 # LIGHTWEIGHT REQUIREMENTS FOR RENDER FREE TIER
 # Python 3.14.0 Compatible (Core Web & API Features)
 # ============================================================
-
+reportlab
 # Django Core
 Django==6.0
 djangorestframework==3.15.2
