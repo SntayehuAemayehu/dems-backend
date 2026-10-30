@@ -82,9 +82,9 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     # ✅ SESSION TIMEOUT MIDDLEWARE
-    'middleware.session_timeout.SessionTimeoutMiddleware',
+    #'middleware.session_timeout.SessionTimeoutMiddleware',
     # ✅ ONE comprehensive security middleware (ALL protections)
-    'middleware.comprehensive_security.ComprehensiveSecurityMiddleware',
+    #'middleware.comprehensive_security.ComprehensiveSecurityMiddleware',
     'analytics.middleware.StudentAccessMiddleware',
     'analytics.middleware.SystemLockMiddleware',
 ]
