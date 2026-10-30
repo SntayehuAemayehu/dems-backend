@@ -1,112 +1,66 @@
 # backend/accounts/face_service.py
-"""
-Face verification using face_recognition (dlib backend).
-Fully functional on Python 3.14 — no OpenCV, no TensorFlow.
-"""
-
+import cv2
+import numpy as np
 import base64
 import logging
-import numpy as np
-from io import BytesIO
-from PIL import Image
+from uniface import FaceAnalyzer
+from uniface import RetinaFace
+retina = RetinaFace()
 
 logger = logging.getLogger(__name__)
 
-_face_recognition = None
-
-
-def _get_fr():
-    global _face_recognition
-    if _face_recognition is None:
-        import face_recognition
-        _face_recognition = face_recognition
-        logger.info("✅ face_recognition loaded")
-    return _face_recognition
+# Initialize UniFace — no args needed in v4.x
+try:
+    analyzer = FaceAnalyzer()
+    logger.info("✅ UniFace FaceAnalyzer initialized")
+except Exception as e:
+    logger.error(f"❌ Failed to initialize UniFace: {e}")
+    analyzer = None
 
 
 def decode_base64_image(image_data):
-    """Decode base64 → numpy RGB uint8 array."""
     try:
         if ',' in image_data:
             image_data = image_data.split(',')[1]
         image_bytes = base64.b64decode(image_data)
-        pil = Image.open(BytesIO(image_bytes)).convert('RGB')
-        return np.array(pil, dtype=np.uint8)
+        np_arr = np.frombuffer(image_bytes, np.uint8)
+        return cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
     except Exception as e:
-        logger.error(f"decode failed: {e}")
+        logger.error(f"Decode error: {e}")
         return None
 
 
 def extract_embedding(image_data):
-    """
-    Extract 128-dim face embedding using face_recognition (dlib).
-    Returns {success, embedding, face_count, face_detected, error}
-    """
+    if analyzer is None:
+        return {'success': False, 'error': 'Face analyzer not initialized'}
+
+    img = decode_base64_image(image_data)
+    if img is None:
+        return {'success': False, 'error': 'Invalid image'}
+
     try:
-        np_image = decode_base64_image(image_data)
-        if np_image is None:
-            return {
-                'success': False,
-                'face_detected': False,
-                'face_count': 0,
-                'error': 'Invalid image data'
-            }
-
-        fr = _get_fr()
-
-        # Detect faces (HOG model - fast, no GPU needed)
-        face_locations = fr.face_locations(np_image, model='hog')
-
-        if len(face_locations) == 0:
-            return {
-                'success': False,
-                'face_detected': False,
-                'face_count': 0,
-                'error': 'No face detected. Ensure good lighting and one face visible.'
-            }
-
-        if len(face_locations) > 1:
-            return {
-                'success': False,
-                'face_detected': True,
-                'face_count': len(face_locations),
-                'error': f'{len(face_locations)} faces detected. Only one person allowed.'
-            }
-
-        # Extract 128-dim embedding
-        encodings = fr.face_encodings(np_image, face_locations)
-
-        if not encodings:
-            return {
-                'success': False,
-                'face_detected': True,
-                'face_count': 1,
-                'error': 'Could not extract face embedding — try better lighting.'
-            }
-
-        embedding = encodings[0].tolist()  # 128 floats
-
+        faces = analyzer.analyze(img)
+        if len(faces) == 0:
+            return {'success': False, 'face_count': 0, 'error': 'No face detected'}
+        
+        # UniFace returns a list of Face objects, each with .embedding
+        emb = faces[0].embedding
+        if hasattr(emb, 'tolist'):
+            emb = emb.tolist()
+        
         return {
             'success': True,
-            'face_detected': True,
-            'face_count': 1,
-            'embedding': embedding,
-            'error': None,
+            'face_count': len(faces),
+            'embedding': emb,
         }
     except Exception as e:
-        logger.error(f"extract_embedding error: {e}")
-        return {
-            'success': False,
-            'face_detected': False,
-            'face_count': 0,
-            'error': str(e)
-        }
+        logger.error(f"Extraction error: {e}")
+        return {'success': False, 'error': str(e)}
 
 
 def compare_embeddings(emb1, emb2):
     """
-    Compare two 128-dim face_recognition embeddings.
-    Uses Euclidean distance. Threshold: 0.6 = same person (dlib standard).
+    Compare two embeddings using cosine similarity.
     Returns {match, similarity, distance, error}
     """
     try:
@@ -118,12 +72,17 @@ def compare_embeddings(emb1, emb2):
                 'match': False,
                 'similarity': 0.0,
                 'distance': 1.0,
-                'error': f'Dimension mismatch ({a.shape} vs {b.shape})'
+                'error': f'Dimension mismatch ({a.shape} vs {b.shape})',
             }
 
-        distance = float(np.linalg.norm(a - b))
-        similarity = max(0.0, 1.0 - distance)
-        match = distance < 0.6
+        # Cosine similarity
+        norm_a = a / np.linalg.norm(a)
+        norm_b = b / np.linalg.norm(b)
+        similarity = float(np.dot(norm_a, norm_b))
+        distance = float(1.0 - similarity)
+
+        # ArcFace threshold: similarity > 0.6 = same person
+        match = similarity > 0.6
 
         return {
             'match': bool(match),
@@ -137,31 +96,59 @@ def compare_embeddings(emb1, emb2):
             'match': False,
             'similarity': 0.0,
             'distance': 1.0,
-            'error': str(e)
+            'error': str(e),
         }
 
 
+
+def count_faces_in_image(image_data):
+    """Returns the number of faces detected in a base64 image."""
+    try:
+        if ',' in image_data:
+            image_data = image_data.split(',')[1]
+        np_arr = np.frombuffer(base64.b64decode(image_data), np.uint8)
+        img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        
+        if img is None:
+            return 0
+        
+        # Detect faces using RetinaFace
+        faces = retina.detect(img)
+        return len(faces)
+    except Exception as e:
+        print(f"Count faces error: {e}")
+        return 0
 def verify_against_reference(image_data, reference_embedding):
-    """Verify live image against stored embedding."""
     result = extract_embedding(image_data)
 
     if not result['success']:
         return {
             'verified': False,
-            'confidence': 0.0,
-            'face_detected': result.get('face_detected', False),
+            'error': result.get('error'),
+            'face_detected': False,
             'multiple_faces': result.get('face_count', 0) > 1,
-            'error': result.get('error', 'Verification failed'),
+        }
+
+    if result['face_count'] > 1:
+        return {
+            'verified': False,
+            'error': 'Multiple faces detected. Only one person allowed.',
+            'face_detected': True,
+            'multiple_faces': True,
         }
 
     cmp = compare_embeddings(result['embedding'], reference_embedding)
 
     return {
-        'verified': cmp['match'],
+        'verified': bool(cmp['match']),
         'confidence': cmp['similarity'],
         'face_detected': True,
         'multiple_faces': False,
-        'error': None if cmp['match'] else f"Identity mismatch (distance: {cmp['distance']}, threshold: 0.6)",
+        'error': (
+            None
+            if cmp['match']
+            else f"Your face does not match the enrolled student (similarity: {cmp['similarity']:.2f})"
+        ),
     }
 
 
