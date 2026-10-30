@@ -1,6 +1,6 @@
 # ============================================================
 # PRODUCTION REQUIREMENTS FOR RENDER FREE TIER
-# Python 3.14 Compatible (Includes all code dependencies)
+# Python 3.14 Compatible (Includes uniface)
 # ============================================================
 
 # Django Core & REST APIs
@@ -22,13 +22,14 @@ dj-database-url==2.3.0
 whitenoise==6.8.2
 gunicorn==22.0.0
 
-# Data Science, ML & Computer Vision (Required by project code)
+# Data Science, ML & Vision (Required by project code)
 numpy==2.5.3
 pandas
 scikit-learn
 scipy
 joblib==1.3.2
 opencv-python-headless
+uniface[cpu]
 
 # Essential File Handling & Utilities
 Pillow==10.4.0
