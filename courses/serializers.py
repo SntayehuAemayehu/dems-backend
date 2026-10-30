@@ -57,7 +57,8 @@ class CourseSerializer(serializers.ModelSerializer):
             'id', 'course_code', 'title', 'description', 'credit_hours', 
             'semester', 'academic_year', 'capacity', 'instructor', 'instructor_name',
             'department', 'department_name', 'is_active', 'is_approved',
-            'enrolled_count', 'is_enrolled', 'created_at', 'materials', 'assignments_count'
+            'enrolled_count', 'is_enrolled', 'created_at', 'materials', 'assignments_count',
+            'is_live'
         ]
         read_only_fields = ['created_at', 'is_approved', 'approved_by']
     

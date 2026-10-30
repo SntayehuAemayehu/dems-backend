@@ -3,7 +3,7 @@
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
 from django.db import models
 from django.utils import timezone
-
+from django.conf import settings 
 
 class UserManager(BaseUserManager):
     def create_user(self, email, password=None, **extra_fields):
@@ -54,10 +54,6 @@ class User(AbstractBaseUser, PermissionsMixin):
         return f"{self.full_name} ({self.email})"
 
 
-
-# accounts/models.py - COMPLETE STUDENT PROFILE WITH CGPA
-
-
 class StudentProfile(models.Model):
     GENDER_CHOICES = [
         ('MALE', 'Male'),
@@ -77,7 +73,7 @@ class StudentProfile(models.Model):
         ('SENIOR', 'Senior Student'),
     ]
     
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='student_profile')
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='student_profile')
     student_id = models.CharField(max_length=50, unique=True, null=True, blank=True, default=None)
     date_of_birth = models.DateField(null=True, blank=True)
     gender = models.CharField(max_length=10, choices=GENDER_CHOICES, null=True, blank=True)
@@ -116,8 +112,18 @@ class StudentProfile(models.Model):
     
     # Activation tracking
     activated_at = models.DateTimeField(null=True, blank=True)
-    activated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='activated_students')
+    activated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='activated_students')
     
+    # ============ FACE VERIFICATION FIELDS (FIXED INDENTATION) ============
+    face_embedding = models.JSONField(null=True, blank=True, help_text="128-d vector representing the student's face")
+    face_enrolled = models.BooleanField(default=False)
+    face_enrolled_at = models.DateTimeField(null=True, blank=True)
+    face_reference_image = models.ImageField(upload_to='face_references/', null=True, blank=True)
+    face_verification_failures = models.IntegerField(default=0)
+    face_last_verified_at = models.DateTimeField(null=True, blank=True)
+    face_verification_history = models.JSONField(default=list, blank=True)
+    profile_photo_updated_at = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         ordering = ['-enrollment_date']
     
@@ -197,19 +203,8 @@ class StudentProfile(models.Model):
             'completed_courses': len([r for r in results if r['status'] == 'COMPLETED']),
             'active_courses': len([r for r in results if r['status'] == 'ACTIVE']),
         }
-# In backend/accounts/models.py - add to StudentProfile class
 
-
-    # ... existing fields ...
-    
-    # ✅ FACE VERIFICATION FIELDS
-    face_embedding = models.JSONField(null=True, blank=True)
-    face_enrolled = models.BooleanField(default=False)
-    face_enrolled_at = models.DateTimeField(null=True, blank=True)
-    face_reference_image = models.ImageField(upload_to='face_references/', null=True, blank=True)
-    face_verification_failures = models.IntegerField(default=0)
-    face_last_verified_at = models.DateTimeField(null=True, blank=True)
-    face_verification_history = models.JSONField(default=list, blank=True)       
+     
 class TeacherProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='teacher_profile')
     employee_id = models.CharField(max_length=50, unique=True, null=True, blank=True)

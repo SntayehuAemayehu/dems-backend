@@ -26,6 +26,7 @@ class Course(models.Model):
     )
     is_active = models.BooleanField(default=True)
     is_approved = models.BooleanField(default=False)
+    is_live = models.BooleanField(default=False)
     approved_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, 
         on_delete=models.SET_NULL, 

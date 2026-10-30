@@ -474,7 +474,8 @@ class StartLiveClassView(APIView):
         if course.instructor != request.user:
             return Response({'error': 'You do not own this course'}, status=status.HTTP_403_FORBIDDEN)
         
-        course.is_active = True
+        # ✅ TURN THE CLASS LIVE IN THE DATABASE
+        course.is_live = True
         course.save()
         
         enrollments = Enrollment.objects.filter(course=course, status='ACTIVE')
@@ -489,7 +490,8 @@ class StartLiveClassView(APIView):
         
         return Response({
             'message': 'Live class started successfully',
-            'course_id': course.id
+            'course_id': course.id,
+            'is_live': course.is_live
         }, status=status.HTTP_200_OK)
 
 

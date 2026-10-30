@@ -1,55 +1,16 @@
 # analytics/views.py - COMPLETE FIXED VERSION
 # Includes ALL views: BankAccount, PaymentPeriod, FeeStructure, Admin, Analytics
-
 from django.db import transaction
 from decimal import Decimal
-
-# ============================================================
-# ✅ SAFE SERVICE IMPORTS — won't crash if ML libs are missing
-# ============================================================
-try:
-    from services.ai_learning_assistant import ai_assistant
-except ImportError as e:
-    ai_assistant = None
-    print(f"⚠️ ai_learning_assistant not available: {e}")
-
-try:
-    from services.adaptive_learning import adaptive_engine
-except ImportError as e:
-    adaptive_engine = None
-    print(f"⚠️ adaptive_learning not available: {e}")
-
-try:
-    from services.gamification import gamification_engine
-except ImportError as e:
-    gamification_engine = None
-    print(f"⚠️ gamification not available: {e}")
-
-try:
-    from services.currency_service import currency_service
-except ImportError as e:
-    currency_service = None
-    print(f"⚠️ currency_service not available: {e}")
-
-try:
-    from services.certificate_service import certificate_service
-except ImportError as e:
-    certificate_service = None
-    print(f"⚠️ certificate_service not available: {e}")
-
-try:
-    from services.i18n_service import i18n_service
-except ImportError as e:
-    i18n_service = None
-    print(f"⚠️ i18n_service not available: {e}")
-
-try:
-    from services.prediction_service import prediction_engine
-except ImportError as e:
-    prediction_engine = None
-    print(f"⚠️ prediction_service not available: {e}")
-
+from services.ai_learning_assistant import ai_assistant
+from services.adaptive_learning import adaptive_engine
+from services.gamification import gamification_engine
+from services.currency_service import currency_service
+from services.certificate_service import certificate_service
+from services.i18n_service import i18n_service
+from services.prediction_service import prediction_engine
 from django.http import HttpResponse
+
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -61,9 +22,8 @@ from courses.models import Course, Enrollment
 from exams.models import Exam, ExamAttempt
 from payments.models import PaymentProof
 from .models import (
-    SystemLog, DailyAnalytics, SystemConfig,
-    BankAccount, PaymentPeriod, FeeStructure, StudentPaymentSchedule,
-    StudentAccessLog, IDSequence, StudentServiceAccess
+    SystemLog, DailyAnalytics, SystemConfig, 
+    BankAccount, PaymentPeriod, FeeStructure, StudentPaymentSchedule,StudentAccessLog, IDSequence, StudentServiceAccess 
 )
 from .serializers import (
     SystemLogSerializer, DailyAnalyticsSerializer, SystemConfigSerializer,
@@ -77,10 +37,9 @@ from django.conf import settings
 import logging
 from io import BytesIO
 import csv
+from django.http import HttpResponse
 
 logger = logging.getLogger(__name__)
-
-# ... REST OF YOUR EXISTING CODE UNCHANGED BELOW ...
 
 # ============= PERMISSION CLASSES =============
 
