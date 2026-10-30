@@ -9,8 +9,7 @@ services:
       pip install --no-cache-dir -r requirements-render.txt
       python manage.py collectstatic --noinput
       python manage.py migrate --noinput
-      python manage.py shell -c "from django.contrib.auth import get_user_model; User = get_user_model(); u, _ = User.objects.get_or_create(username='admin'); u.set_password('Sntua6960'); u.is_staff=True; u.is_superuser=True; u.is_active=True; u.save()"
-      python manage.py createsuperuser --noinput || true
+      python manage.py shell -c "from django.contrib.auth import get_user_model; User = get_user_model(); u, _ = User.objects.get_or_create(email='admin@gmail.com'); u.set_password('Sntu@6960'); u.is_staff=True; u.is_superuser=True; u.is_active=True; u.full_name='Admin'; u.save()"
     startCommand: daphne -b 0.0.0.0 -p $PORT dems_backend.asgi:application
     envVars:
       - key: PYTHON_VERSION
@@ -23,12 +22,6 @@ services:
         value: false
       - key: ALLOWED_HOSTS
         value: .onrender.com,localhost,127.0.0.1
-      - key: DJANGO_SUPERUSER_USERNAME
-        value: admin
-      - key: DJANGO_SUPERUSER_EMAIL
-        value: admin@example.com
-      - key: DJANGO_SUPERUSER_PASSWORD
-        value: Sntua6960
       - key: DATABASE_URL
         fromDatabase:
           name: dems-db
