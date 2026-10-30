@@ -1,6 +1,6 @@
 # ============================================================
 # LIGHTWEIGHT REQUIREMENTS FOR RENDER FREE TIER
-# Python 3.14.3 Compatible (No Pandas/Scikit-Learn)
+# Python 3.14 Compatible (Updated Versions)
 # ============================================================
 
 # Django Core & APIs
@@ -28,8 +28,10 @@ dj-database-url==2.3.0
 whitenoise==6.8.2
 argon2-cffi
 
-# Lightweight Math & Utilities (NumPy kept for base math)
+# Data Science & ML (Python 3.14 compatible versions)
 numpy==2.5.3
+pandas>=2.3.3
+scikit-learn>=1.8.0
 joblib==1.3.2
 
 # Images & Utilities
