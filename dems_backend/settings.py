@@ -108,10 +108,9 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = 'dems_backend.urls'
-
 TEMPLATES = [
     {
-        'BACKEND': 'django.template.backends.DjangoTemplates',
+        'BACKEND': 'django.template.backends.django.DjangoTemplates',
         'DIRS': [],
         'APP_DIRS': True,
         'OPTIONS': {
@@ -124,6 +123,7 @@ TEMPLATES = [
         },
     },
 ]
+
 
 WSGI_APPLICATION = 'dems_backend.wsgi.application'
 ASGI_APPLICATION = 'dems_backend.asgi.application'
