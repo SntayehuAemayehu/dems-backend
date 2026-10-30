@@ -1,8 +1,9 @@
 # ============================================================
 # LIGHTWEIGHT REQUIREMENTS FOR RENDER FREE TIER
-# Python 3.14.0 Compatible (Core Web & API Features)
+# Python 3.14.3 Compatible
 # ============================================================
 reportlab
+
 # Django Core
 Django==6.0
 djangorestframework==3.15.2
@@ -10,12 +11,14 @@ django-cors-headers==4.4.0
 djangorestframework-simplejwt==5.3.1
 django-filter==24.3
 openpyxl
+
 # WebSockets
 channels==4.1.0
 channels-redis==4.2.1
 daphne==4.1.2
 redis==5.2.1
 argon2-cffi
+
 # Database
 psycopg2-binary==2.9.10
 dj-database-url==2.3.0
@@ -23,9 +26,10 @@ dj-database-url==2.3.0
 # Static Files
 whitenoise==6.8.2
 
-# Images (lightweight only)
+# Images & Machine Learning
 Pillow==10.4.0
 numpy==2.5.3
+scikit-learn
 
 # Utilities
 python-decouple==3.8
