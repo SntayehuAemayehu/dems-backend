@@ -3,14 +3,13 @@ services:
     name: dems-backend
     env: python
     plan: free
-        buildCommand: |
+    buildCommand: |
       apt-get update && apt-get install -y libmagic1
       pip install --upgrade pip
       pip install --no-cache-dir -r requirements-render.txt
       python manage.py collectstatic --noinput
       python manage.py migrate --noinput
-      python manage.py shell -c "from django.contrib.auth import get_user_model; User = get_user_model(); u, _ = User.objects.get_or_create(username='admin'); u.set_password('Sntua6960'); u.is_staff=True; u.is_superuser=True; u.is_active=True; u.save()"# Note: If your manage.py is in the root directory, remove the 'cd backend' on the next two lines.
-    # If your code is indeed in the backend/ folder, keep them.
+      python manage.py shell -c "from django.contrib.auth import get_user_model; User = get_user_model(); u, _ = User.objects.get_or_create(username='admin'); u.set_password('Sntua6960'); u.is_staff=True; u.is_superuser=True; u.is_active=True; u.save()"
     startCommand: daphne -b 0.0.0.0 -p $PORT dems_backend.asgi:application
     envVars:
       - key: PYTHON_VERSION
