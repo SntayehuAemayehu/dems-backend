@@ -8,14 +8,14 @@ import sqlite3
 from django.db.backends.signals import connection_created
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, os.path.join(BASE_DIR, 'middleware'))
-# =
+# ================================================================
 # IMPORTANT: Set DEBUG to True for development
-# =
+# ================================================================
 DEBUG = True  # ← MUST BE True for development
 
-# =
+# ================================================================
 # ALLOWED_HOSTS - Add your hosts here
-# =
+# ================================================================
 ALLOWED_HOSTS = ['127.0.0.1', 'localhost', '0.0.0.0', '*']
 
 SECRET_KEY = 'django-insecure-dems-2024-secret-key-change-in-production'
@@ -56,14 +56,14 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
  # ✅ ADD SESSION TIMEOUT MIDDLEWARE
-    #'middleware.session_timeout.SessionTimeoutMiddleware',
+    'middleware.session_timeout.SessionTimeoutMiddleware',
     # ✅ ADD THIS LINE - Rate Limit Middleware
     #'middleware.security_headers.SecurityHeadersMiddleware',
     #'middleware.rate_limit.RateLimitMiddleware',
     #'middleware.security_middleware.SQLInjectionMiddleware',
     #'middleware.security_middleware.SecureCookieMiddleware',
     # ✅ ONE comprehensive security middleware (ALL protections)
-    #'middleware.comprehensive_security.ComprehensiveSecurityMiddleware',
+    'middleware.comprehensive_security.ComprehensiveSecurityMiddleware',
     'analytics.middleware.StudentAccessMiddleware',
     'analytics.middleware.SystemLockMiddleware',
      # ✅ COMPREHENSIVE SECURITY MIDDLEWARE - ALL IN ONE
@@ -193,9 +193,9 @@ if DEBUG:
     STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# =
+# ================================================================
 # EMAIL SETTINGS - REAL EMAIL SENDING (SMTP)
-# =
+# ================================================================
 
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
@@ -207,9 +207,9 @@ EMAIL_HOST_PASSWORD = 'ozngfsecuztuoptr'
 DEFAULT_FROM_EMAIL = 'DEMS <sntualex@gmail.com>'
 EMAIL_TIMEOUT = 30
 
-# =
+# ================================================================
 # PAYMENT GATEWAY CONFIGURATIONS
-# =
+# ================================================================
 
 # Chapa
 CHAPA_TEST_SECRET_KEY = 'CHASECK_TEST-7CKIWgCnj5vpIdPskLKOKOhX3JZgwshd'
@@ -237,9 +237,9 @@ else:
 STRIPE_API_VERSION = '2023-10-16'
 STRIPE_WEBHOOK_SECRET = os.environ.get('STRIPE_WEBHOOK_SECRET', '')
 
-# =
+# ================================================================
 # OPENAI CONFIGURATION
-# =
+# ================================================================
 
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
 OPENAI_MODEL = os.environ.get('OPENAI_MODEL', 'gpt-4')
@@ -249,17 +249,17 @@ OPENAI_USE_GPT4_FOR_GRADING = os.environ.get('OPENAI_USE_GPT4_FOR_GRADING', 'Tru
 OPENAI_USE_GPT4_FOR_PLAGIARISM = os.environ.get('OPENAI_USE_GPT4_FOR_PLAGIARISM', 'False') == 'True'
 OPENAI_RATE_LIMIT = int(os.environ.get('OPENAI_RATE_LIMIT', 60))
 
-# =
+# ================================================================
 # AI PROCTORING CONFIGURATION
-# =
+# ================================================================
 
 AI_PROCTOR_SUSPICIOUS_THRESHOLD = int(os.environ.get('AI_PROCTOR_SUSPICIOUS_THRESHOLD', 3))
 AI_PROCTOR_WARNING_THRESHOLD = int(os.environ.get('AI_PROCTOR_WARNING_THRESHOLD', 2))
 AI_PROCTOR_AUTO_FLAG = os.environ.get('AI_PROCTOR_AUTO_FLAG', 'True') == 'True'
 
-# =
+# ================================================================
 # AI RECOMMENDATIONS CONFIGURATION
-# =
+# ================================================================
 AI_RECOMMENDATIONS_USE_AI = os.environ.get('AI_RECOMMENDATIONS_USE_AI', 'True') == 'True'
 AI_RECOMMENDATIONS_MAX_RESULTS = int(os.environ.get('AI_RECOMMENDATIONS_MAX_RESULTS', 10))
 
@@ -267,16 +267,16 @@ AI_RECOMMENDATIONS_MAX_RESULTS = int(os.environ.get('AI_RECOMMENDATIONS_MAX_RESU
 DATA_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024  # 50MB
 FILE_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024   # 50MB
 
-# =
-# =
+# ================================================================
+# ================================================================
 # ✅ NEW SECURITY HARDENING SECTION - APPENDED (2024)
-# =
-# =
+# ================================================================
+# ================================================================
 # Everything below is NEW — nothing above was modified.
 
-# =
+# ================================================================
 # EXTRA DJANGO-LEVEL SECURITY HARDENING
-# =
+# ================================================================
 
 # --- HTTPS / Transport Security ---
 SECURE_SSL_REDIRECT = False          # Set True in production (HTTPS)
@@ -309,9 +309,9 @@ CSRF_TRUSTED_ORIGINS = [
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 200
 DATA_UPLOAD_MAX_NUMBER_FILES = 20
 
-# =
+# ================================================================
 # SECURITY MIDDLEWARE CONFIG (used by comprehensive_security.py)
-# =
+# ================================================================
 
 # --- IP Whitelist / Blacklist ---
 SEC_WHITELISTED_IPS = ['127.0.0.1', '::1']
@@ -375,15 +375,10 @@ SEC_CSP_POLICY = (
     "form-action 'self';"
 )
 
-# =
+# ================================================================
 # END OF NEW SECURITY HARDENING SECTION
-# =
+# ================================================================
 # SQLite WAL Mode
-
-
-# =
-# END OF PRODUCTION-READY SETTINGS
-# =
 
 def _sqlite_pragmas(sender, connection, **kwargs):
     if connection.vendor == 'sqlite':
@@ -393,4 +388,3 @@ def _sqlite_pragmas(sender, connection, **kwargs):
         cursor.execute('PRAGMA busy_timeout=30000;')
 
 connection_created.connect(_sqlite_pragmas)
-
