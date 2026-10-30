@@ -124,7 +124,7 @@ TEMPLATES = [
     },
 ]
 
-
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 WSGI_APPLICATION = 'dems_backend.wsgi.application'
 ASGI_APPLICATION = 'dems_backend.asgi.application'
 
