@@ -22,8 +22,11 @@ dj-database-url==2.3.0
 whitenoise==6.8.2
 gunicorn==22.0.0
 
-# Essential Math (Required by your project code)
+# Math, ML & Analytics (Required by project code)
 numpy==2.5.3
+scipy
+scikit-learn
+joblib==1.3.2
 
 # Essential File Handling & Utilities
 Pillow==10.4.0
