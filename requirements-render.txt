@@ -41,7 +41,7 @@ qrcode[pil]
 python-decouple==3.8
 requests==2.32.3
 python-magic==0.4.27
-
+argon2-cffi
 # External APIs
 openai==1.55.3
 stripe==10.12.0
