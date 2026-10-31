@@ -1,70 +1,25 @@
-# dems_backend/settings.py - FIXED FOR POSTGRESQL & FRONTEND INTEGRATION
+# dems_backend/settings.py - COMPLETE PRODUCTION READY
 import sys
 import os
 from pathlib import Path
 from datetime import timedelta
+from decouple import config
 import dj_database_url
+import sqlite3
 from django.db.backends.signals import connection_created
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, os.path.join(BASE_DIR, 'middleware'))
 
 # ================================================================
-# PRODUCTION / DEVELOPMENT TOGGLES
+# ENVIRONMENT VARIABLES (Reads from .env locally, Render Env Vars in prod)
 # ================================================================
-# DEBUG is controlled via environment variable on Render (defaults to False in prod)
-DEBUG = os.environ.get('DEBUG', 'False').lower() in ('true', '1', 't')
+SECRET_KEY = config('SECRET_KEY', default='django-insecure-dems-2024-secret-key-change-in-production')
+DEBUG = config('DEBUG', default=True, cast=bool)
 
-SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-dems-2024-secret-key-change-in-production')
+# Allow localhost and Render URLs
+ALLOWED_HOSTS = ['127.0.0.1', 'localhost', '0.0.0.0', '.onrender.com', '*']
 
-# ================================================================
-# ALLOWED_HOSTS & CORS CONFIGURATION
-# ================================================================
-ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '.onrender.com,localhost,127.0.0.1,0.0.0.0').split(',')
-
-# Frontend Integration
-CORS_ALLOWED_ORIGINS = [
-    'https://dems-frontend.onrender.com',
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-    'http://localhost:5173',
-]
-
-CORS_ALLOW_ALL_ORIGINS = DEBUG  # Allow all only in local dev mode
-CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOW_METHODS = [
-    'DELETE',
-    'GET',
-    'OPTIONS',
-    'PATCH',
-    'POST',
-    'PUT',
-]
-CORS_ALLOW_HEADERS = [
-    'accept',
-    'accept-encoding',
-    'authorization',
-    'content-type',
-    'dnt',
-    'origin',
-    'user-agent',
-    'x-csrftoken',
-    'x-requested-with',
-    'content-disposition',
-]
-
-CSRF_TRUSTED_ORIGINS = [
-    'https://dems-frontend.onrender.com',
-    'https://*.onrender.com',
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-    'http://localhost:8000',
-    'http://127.0.0.1:8000',
-]
-
-# ================================================================
-# INSTALLED APPS & MIDDLEWARE
-# ================================================================
 INSTALLED_APPS = [
     'daphne', 
     'django.contrib.admin',
@@ -78,7 +33,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
     'corsheaders',
-    'channels',  # WebSocket support
+    'channels', 
     
     # Local apps
     'accounts',
@@ -94,7 +49,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',  # Static files on Render
+    'whitenoise.middleware.WhiteNoiseMiddleware', # ✅ Added for Render static files
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -108,6 +63,7 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = 'dems_backend.urls'
+
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
@@ -124,33 +80,40 @@ TEMPLATES = [
     },
 ]
 
-SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 WSGI_APPLICATION = 'dems_backend.wsgi.application'
 ASGI_APPLICATION = 'dems_backend.asgi.application'
 
 # ================================================================
-# DATABASE CONFIGURATION (POSTGRESQL - NEON)
+# DATABASE (Neon PostgreSQL on Render, SQLite Locally)
 # ================================================================
-# Uses dj_database_url to automatically connect to Render's DATABASE_URL (Neon PostgreSQL)
 DATABASES = {
     'default': dj_database_url.config(
-        default=os.environ.get('DATABASE_URL'),
-        conn_max_age=600,
-        ssl_require=True
+        default='sqlite:///' + str(BASE_DIR / 'db.sqlite3'),
+        conn_max_age=600
     )
 }
 
 # ================================================================
-# CHANNELS / WEBSOCKETS
+# CHANNEL LAYERS (Redis on Render, In-Memory Locally)
 # ================================================================
-CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels.layers.InMemoryChannelLayer',
-    },
-}
+if not DEBUG:
+    # Production (Render) - We won't use Redis to save memory on Free Tier.
+    # We will use InMemory, but note: this means WebSockets won't work across multiple instances.
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        },
+    }
+else:
+    # Local Development
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        },
+    }
 
 # ================================================================
-# AUTH & PASSWORDS
+# AUTHENTICATION & REST FRAMEWORK
 # ================================================================
 PASSWORD_HASHERS = [
     'django.contrib.auth.hashers.Argon2PasswordHasher',
@@ -168,9 +131,6 @@ AUTH_PASSWORD_VALIDATORS = [
 
 AUTH_USER_MODEL = 'accounts.User'
 
-# ================================================================
-# REST FRAMEWORK & JWT
-# ================================================================
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
@@ -193,15 +153,26 @@ SIMPLE_JWT = {
 }
 
 # ================================================================
-# STATIC & MEDIA FILES
+# CORS & STATIC FILES
 # ================================================================
+CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_METHODS = ['DELETE', 'GET', 'OPTIONS', 'PATCH', 'POST', 'PUT']
+CORS_ALLOW_HEADERS = [
+    'accept', 'accept-encoding', 'authorization', 'content-type', 'dnt',
+    'origin', 'user-agent', 'x-csrftoken', 'x-requested-with', 'content-disposition',
+]
+
 STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage' # ✅ Render fix
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 os.makedirs(MEDIA_ROOT, exist_ok=True)
+
+if DEBUG:
+    STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -213,66 +184,97 @@ EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 EMAIL_USE_SSL = False
-EMAIL_HOST_USER = 'sntualex@gmail.com'
-EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', 'ozngfsecuztuoptr')
+EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='sntualex@gmail.com')
+EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='') # ✅ Must be in Render Env Vars
 DEFAULT_FROM_EMAIL = 'DEMS <sntualex@gmail.com>'
 EMAIL_TIMEOUT = 30
 
 # ================================================================
-# PAYMENT GATEWAYS (Chapa & Stripe)
+# PAYMENT GATEWAYS
 # ================================================================
-CHAPA_TEST_SECRET_KEY = 'CHASECK_TEST-7CKIWgCnj5vpIdPskLKOKOhX3JZgwshd'
-CHAPA_TEST_PUBLISHABLE_KEY = 'CHAPUBK_TEST-ThDGeNx2LqhU85PU3l0fr00uw2u7zfhY'
-CHAPA_ENVIRONMENT = 'test'
-CHAPA_SECRET_KEY = os.environ.get('CHAPA_LIVE_SECRET_KEY', CHAPA_TEST_SECRET_KEY)
-CHAPA_PUBLISHABLE_KEY = os.environ.get('CHAPA_LIVE_PUBLISHABLE_KEY', CHAPA_TEST_PUBLISHABLE_KEY)
-CHAPA_BASE_URL = os.environ.get('CHAPA_BASE_URL', 'https://api.chapa.co/v1')
+CHAPA_TEST_SECRET_KEY = config('CHAPA_TEST_SECRET_KEY', default='CHASECK_TEST-xxxx')
+CHAPA_TEST_PUBLISHABLE_KEY = config('CHAPA_TEST_PUBLISHABLE_KEY', default='CHAPUBK_TEST-xxxx')
+CHAPA_BASE_URL = config('CHAPA_BASE_URL', default='https://api.chapa.co/v1')
+BASE_URL = config('BASE_URL', default='http://localhost:8000')
 
-STRIPE_TEST_SECRET_KEY = 'sk_test_51U1xdxEEab9lbcMN3HQPDxyRqFaqcCq0M9GSQlgOaXS37sbKUYYc4anW2yV93VDM1XvpitJSrawzMoZ2EHJEpbQE00qttsEGEP'
-STRIPE_TEST_PUBLISHABLE_KEY = 'pk_test_51U1xdxEEab9lbcMNppN8gCwp8IfiXtRBxcIJGxfmYIJMCG2tyF3VmRMkAFe3guztu9WlEhyxkoIR4DKaZvhjFUD900bVIgtYR0'
-STRIPE_SECRET_KEY = os.environ.get('STRIPE_LIVE_SECRET_KEY', STRIPE_TEST_SECRET_KEY)
-STRIPE_PUBLISHABLE_KEY = os.environ.get('STRIPE_LIVE_PUBLISHABLE_KEY', STRIPE_TEST_PUBLISHABLE_KEY)
+STRIPE_TEST_SECRET_KEY = config('STRIPE_TEST_SECRET_KEY', default='sk_test_xxxx')
+STRIPE_TEST_PUBLISHABLE_KEY = config('STRIPE_TEST_PUBLISHABLE_KEY', default='pk_test_xxxx')
 STRIPE_API_VERSION = '2023-10-16'
-STRIPE_WEBHOOK_SECRET = os.environ.get('STRIPE_WEBHOOK_SECRET', '')
-
-BASE_URL = os.environ.get('BASE_URL', 'https://dems-backend.onrender.com')
+STRIPE_WEBHOOK_SECRET = config('STRIPE_WEBHOOK_SECRET', default='')
 
 # ================================================================
-# OPENAI & AI PROCTORING
+# AI & PROCTORING CONFIGURATION
 # ================================================================
-OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
-OPENAI_MODEL = os.environ.get('OPENAI_MODEL', 'gpt-4')
-OPENAI_MAX_TOKENS = int(os.environ.get('OPENAI_MAX_TOKENS', 4096))
-OPENAI_TEMPERATURE = float(os.environ.get('OPENAI_TEMPERATURE', 0.7))
-
-AI_PROCTOR_SUSPICIOUS_THRESHOLD = int(os.environ.get('AI_PROCTOR_SUSPICIOUS_THRESHOLD', 3))
-AI_PROCTOR_WARNING_THRESHOLD = int(os.environ.get('AI_PROCTOR_WARNING_THRESHOLD', 2))
-AI_PROCTOR_AUTO_FLAG = os.environ.get('AI_PROCTOR_AUTO_FLAG', 'True') == 'True'
-
-AI_RECOMMENDATIONS_USE_AI = os.environ.get('AI_RECOMMENDATIONS_USE_AI', 'True') == 'True'
-AI_RECOMMENDATIONS_MAX_RESULTS = int(os.environ.get('AI_RECOMMENDATIONS_MAX_RESULTS', 10))
+OPENAI_API_KEY = config('OPENAI_API_KEY', default='')
+OPENAI_MODEL = config('OPENAI_MODEL', default='gpt-4')
+AI_PROCTOR_SUSPICIOUS_THRESHOLD = 3
+AI_PROCTOR_WARNING_THRESHOLD = 2
+AI_PROCTOR_AUTO_FLAG = True
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024
 FILE_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024
 
 # ================================================================
-# SECURITY & COOKIE HARDENING
+# SECURITY HARDENING (Production vs Development)
 # ================================================================
-SECURE_SSL_REDIRECT = not DEBUG
-SESSION_COOKIE_SECURE = not DEBUG
-CSRF_COOKIE_SECURE = not DEBUG
+SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', default=False, cast=bool)
+SESSION_COOKIE_SECURE = config('SESSION_COOKIE_SECURE', default=False, cast=bool)
+CSRF_COOKIE_SECURE = config('CSRF_COOKIE_SECURE', default=False, cast=bool)
+
+SECURE_HSTS_SECONDS = 31536000
+SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+SECURE_HSTS_PRELOAD = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_BROWSER_XSS_FILTER = True
+SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
+SECURE_CROSS_ORIGIN_OPENER_POLICY = 'same-origin'
+X_FRAME_OPTIONS = 'DENY'
 
 SESSION_COOKIE_HTTPONLY = True
-SESSION_COOKIE_SAMESITE = 'None' if not DEBUG else 'Lax'
-CSRF_COOKIE_HTTPONLY = False  # Required by DRF / JS frontend
-CSRF_COOKIE_SAMESITE = 'None' if not DEBUG else 'Lax'
-
+SESSION_COOKIE_SAMESITE = 'Lax'
 SESSION_COOKIE_AGE = 1800
 SESSION_EXPIRE_AT_BROWSER_CLOSE = True
 SESSION_SAVE_EVERY_REQUEST = True
 
-# Security Middleware Configs
+CSRF_COOKIE_HTTPONLY = True
+CSRF_COOKIE_SAMESITE = 'Lax'
+CSRF_TRUSTED_ORIGINS = [
+    'http://localhost:3000', 'http://127.0.0.1:3000',
+    'http://localhost:8000', 'http://127.0.0.1:8000',
+    'https://*.onrender.com', # ✅ Allow Render Domain
+]
+
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 200
+DATA_UPLOAD_MAX_NUMBER_FILES = 20
+
+# ================================================================
+# SECURITY MIDDLEWARE CONFIG
+# ================================================================
 SEC_WHITELISTED_IPS = ['127.0.0.1', '::1']
+SEC_BLACKLISTED_IPS = []
+SEC_BLACKLISTED_SUBNETS = []
+SEC_TRUSTED_PROXIES = []
+
+SEC_AUTO_BLACKLIST_THRESHOLD = 15
+SEC_AUTO_BLACKLIST_WINDOW = 3600
+SEC_AUTO_BLACKLIST_DURATION = 86400
+
+SEC_MAX_REQUEST_SIZE = 50 * 1024 * 1024
+SEC_MAX_URL_LENGTH = 2048
+SEC_MAX_HEADER_SIZE = 16384
+SEC_MAX_QUERY_PARAMS = 50
+SEC_MAX_JSON_DEPTH = 10
+SEC_MAX_JSON_KEYS = 500
+
+SEC_MAX_FILE_SIZE = 50 * 1024 * 1024
+SEC_BLOCKED_EXTENSIONS = [
+    '.exe', '.bat', '.cmd', '.com', '.pif', '.scr', '.vbs', '.js',
+    '.jar', '.msi', '.dll', '.so', '.dylib', '.sh', '.bash',
+    '.php', '.phtml', '.py', '.pl', '.rb', '.cgi', '.asp', '.aspx',
+    '.jsp', '.jspx', '.class', '.bin', '.apk', '.app', '.deb', '.rpm',
+    '.ps1', '.psm1', '.psd1', '.hta', '.wsf', '.wsh', '.lnk', '.reg',
+]
+
 SEC_RATE_LIMITS = {
     'admin':   {'requests': 30,  'window': 60},
     'api':     {'requests': 120, 'window': 60},
@@ -282,3 +284,35 @@ SEC_RATE_LIMITS = {
     'search':  {'requests': 60,  'window': 60},
     'default': {'requests': 100, 'window': 60},
 }
+
+SEC_HONEYPOT_PATHS = [
+    '/admin.php', '/wp-admin', '/wp-login.php', '/phpmyadmin',
+    '/.env', '/.git/config', '/config.php', '/backup.sql',
+    '/phpinfo.php', '/shell.php', '/xmlrpc.php',
+]
+
+SEC_HSTS_MAX_AGE = 31536000
+SEC_CSP_POLICY = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+    "font-src 'self' https://fonts.gstatic.com data:; "
+    "img-src 'self' data: blob: https://*; "
+    "media-src 'self' blob: https://*; "
+    "connect-src 'self' https://* wss://* ws://*; "
+    "frame-ancestors 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self';"
+)
+
+# ================================================================
+# SQLITE WAL MODE (For Local Dev Only)
+# ================================================================
+def _sqlite_pragmas(sender, connection, **kwargs):
+    if connection.vendor == 'sqlite':
+        cursor = connection.cursor()
+        cursor.execute('PRAGMA journal_mode=WAL;')
+        cursor.execute('PRAGMA synchronous=NORMAL;')
+        cursor.execute('PRAGMA busy_timeout=30000;')
+
+connection_created.connect(_sqlite_pragmas)

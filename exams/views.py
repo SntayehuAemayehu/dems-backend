@@ -2144,43 +2144,39 @@ class VerifyFaceIdentityView(APIView):
     def post(self, request):
         from accounts.views import VerifyFaceAtExamView
         return VerifyFaceAtExamView().post(request)
-# exams/views.py — add this class
-from accounts.face_service import extract_face_embedding
-#import face_recognition
-try:
-    import face_recognition
-    FACE_RECOGNITION_AVAILABLE = True
-except ImportError:
-    FACE_RECOGNITION_AVAILABLE = False
-import numpy as np
-import base64
-from io import BytesIO
-from PIL import Image
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import permissions
-
 class CountFacesView(APIView):
+    """
+    Count faces in an image using UniFace RetinaFace (already installed).
+    Replaces the old face_recognition/dlib implementation to avoid 500MB dlib.
+    """
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
         image_data = request.data.get('image_data')
         if not image_data:
             return Response({'face_count': 0, 'error': 'No image'}, status=400)
-        
+
         try:
-            # Decode image
-            if ',' in image_data:
-                image_data = image_data.split(',')[1]
-            image_bytes = base64.b64decode(image_data)
-            pil = Image.open(BytesIO(image_bytes)).convert('RGB')
-            np_image = np.array(pil, dtype=np.uint8)
+            import cv2
+            import numpy as np
+            import base64
+            from accounts.face_service import retina
 
-            # Count faces using HOG
-            face_locations = face_recognition.face_locations(np_image, number_of_times_to_upsample=1, model='hog')
-            count = len(face_locations)
+            # Strip the data URL prefix if present
+            cleaned = image_data.split(',')[1] if ',' in image_data else image_data
 
-            return Response({'face_count': count})
+            # Decode to numpy array, then to OpenCV BGR image
+            img_bytes = base64.b64decode(cleaned)
+            np_arr = np.frombuffer(img_bytes, np.uint8)
+            img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+            if img is None:
+                return Response({'face_count': 0, 'error': 'Invalid image'}, status=200)
+
+            # RetinaFace detects faces — returns a list
+            faces = retina.detect(img)
+            return Response({'face_count': len(faces)})
+
         except Exception as e:
             return Response({'face_count': 0, 'error': str(e)}, status=200)
 

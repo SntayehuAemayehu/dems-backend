@@ -3,7 +3,7 @@ services:
     name: dems-backend
     env: python
     plan: free
-        buildCommand: |
+    buildCommand: |
       apt-get update && apt-get install -y libmagic1
       pip install --upgrade pip
       pip install --no-cache-dir -r requirements-render.txt
@@ -13,13 +13,15 @@ services:
     startCommand: daphne -b 0.0.0.0 -p $PORT dems_backend.asgi:application
     envVars:
       - key: PYTHON_VERSION
-        value: 3.14.0
+        value: 3.14.3
       - key: DJANGO_SETTINGS_MODULE
         value: dems_backend.settings
       - key: SECRET_KEY
-        generateValue: true
+        generateValue: true  # ✅ Fixes Warning W009
       - key: DEBUG
-        value: false
+        value: "False"       # ✅ Fixes Warning W018
+      - key: SECURE_SSL_REDIRECT
+        value: "True"        # ✅ Fixes Warning W008
       - key: ALLOWED_HOSTS
         value: .onrender.com,localhost,127.0.0.1
       - key: DATABASE_URL
