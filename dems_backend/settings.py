@@ -57,7 +57,7 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'middleware.session_timeout.SessionTimeoutMiddleware',
-    #'middleware.comprehensive_security.ComprehensiveSecurityMiddleware',
+    'middleware.comprehensive_security.ComprehensiveSecurityMiddleware',
     'analytics.middleware.StudentAccessMiddleware',
     'analytics.middleware.SystemLockMiddleware',
 ]
