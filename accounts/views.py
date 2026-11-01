@@ -1886,7 +1886,6 @@ from django.core.cache import cache
 
 # backend/accounts/views.py
 # REPLACE LoginView with this
-
 class LoginView(APIView):
     permission_classes = [permissions.AllowAny]
     
@@ -1945,14 +1944,22 @@ class LoginView(APIView):
         
         user = serializer.validated_data['user']
         
+        # ============================================================
+        # ✅ NEW: BLOCK ADMIN FROM NORMAL LOGIN PAGE
+        # ============================================================
+        if user.role == 'ADMIN':
+            return Response({
+                'error': 'Access Denied',
+                'message': 'Administrators must use the dedicated Admin Login page.',
+                'is_admin': True
+            }, status=status.HTTP_403_FORBIDDEN)
+        # ============================================================
+
         # ✅ LOGIN SUCCESSFUL - Reset attempts for THIS user
         cache.delete(cache_key)
         cache.delete(lock_key)
         
         refresh = RefreshToken.for_user(user)
-        
-        # Continue with normal login logic...
-        # (keep your existing login response code here)
         
         dashboard_map = {
             'STUDENT': '/dashboard',
@@ -1977,6 +1984,7 @@ class LoginView(APIView):
         if x_forwarded_for:
             return x_forwarded_for.split(',')[0].strip()
         return request.META.get('REMOTE_ADDR', '')
+
 class UserProfileView(generics.RetrieveUpdateAPIView):
     serializer_class = UserSerializer
     permission_classes = [permissions.IsAuthenticated]
