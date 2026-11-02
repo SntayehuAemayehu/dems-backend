@@ -4700,54 +4700,87 @@ class FaceEnrollmentStatusView(APIView):
         try:
             student = request.user.student_profile
             return Response({
-                'face_enrolled': student.face_enrolled,
+                'face_enrolled': bool(student.face_enrolled),
                 'enrolled_at': student.face_enrolled_at.isoformat() if student.face_enrolled_at else None,
-                'verification_attempts': student.face_verification_attempts
+                'verification_failures': student.face_verification_failures or 0,
+                'has_embedding': bool(student.face_embedding),
             })
-        except Exception:
+        except Exception as e:
+            logger.error(f"Face status error: {e}")
             return Response({
                 'face_enrolled': False,
-                'message': 'Student profile not found'
+                'message': 'Student profile not found',
+                'error': str(e)
             })
 
 
 # accounts/views.py — REPLACE VerifyFaceAtExamView
 
 class VerifyFaceAtExamView(APIView):
+    """
+    Verify student's face against enrolled embedding.
+    attempt_id is OPTIONAL.
+    """
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        from exams.models import ExamAttempt
         from accounts.face_service import verify_against_reference
 
         image_data = request.data.get('image_data')
-        attempt_id = request.data.get('attempt_id')
+        attempt_id = request.data.get('attempt_id')  # optional
 
         if not image_data:
-            return Response({'verified': False, 'error': 'image_data is required'}, status=400)
+            return Response(
+                {'verified': False, 'error': 'image_data is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         try:
             student = request.user.student_profile
         except Exception:
-            return Response({'verified': False, 'error': 'Student profile not found'}, status=404)
+            return Response(
+                {'verified': False, 'error': 'Student profile not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
         if not student.face_enrolled or not student.face_embedding:
-            return Response({'verified': False, 'error': 'Face not enrolled', 'needs_enrollment': True}, status=400)
+            return Response({
+                'verified': False,
+                'error': 'Face not enrolled',
+                'needs_enrollment': True
+            }, status=status.HTTP_400_BAD_REQUEST)
 
+        # Perform identity verification
         result = verify_against_reference(image_data, student.face_embedding)
 
-        if result['verified']:
+        if result.get('verified'):
+            # Optional: if attempt_id is provided, mark the attempt as face_verified
+            if attempt_id:
+                try:
+                    from exams.models import ExamAttempt
+                    attempt = ExamAttempt.objects.get(
+                        id=attempt_id,
+                        student=student
+                    )
+                    attempt.face_verified = True
+                    attempt.face_match_confidence = result.get('confidence', 0)
+                    attempt.save(update_fields=['face_verified', 'face_match_confidence'])
+                except ExamAttempt.DoesNotExist:
+                    pass  # ignore if attempt not found
+
             return Response({
                 'verified': True,
-                'confidence': result['confidence'],
+                'confidence': result.get('confidence', 0),
                 'message': 'Identity verified'
-            }, status=200)
-        
+            }, status=status.HTTP_200_OK)
+
+        # Verification failed
         return Response({
             'verified': False,
-            'error': result.get('error'),
-            'multiple_faces': result.get('multiple_faces', False)
-        }, status=400)
+            'error': result.get('error') or 'Face does not match enrolled student',
+            'multiple_faces': result.get('multiple_faces', False),
+            'confidence': result.get('confidence', 0)
+        }, status=status.HTTP_400_BAD_REQUEST)
         
 class AdminResetFaceView(APIView):
     permission_classes = [permissions.IsAuthenticated]
