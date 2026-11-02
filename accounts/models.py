@@ -79,6 +79,7 @@ class StudentProfile(models.Model):
     gender = models.CharField(max_length=10, choices=GENDER_CHOICES, null=True, blank=True)
     address = models.TextField(blank=True)
     enrollment_date = models.DateField(default=timezone.now)
+    year = models.PositiveSmallIntegerField(default=1)
     current_semester = models.IntegerField(default=1)
     department = models.CharField(max_length=100, blank=True)
     program = models.CharField(max_length=100, blank=True)

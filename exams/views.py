@@ -159,7 +159,8 @@ class QuestionView(generics.ListCreateAPIView):
         except Exam.DoesNotExist:
             return Response({'error': 'Exam not found'}, status=status.HTTP_404_NOT_FOUND)
         
-        if request.user.role != 'ADMIN' and exam.created_by != request.user:
+        # ✅ FIX: Allow if user is ADMIN, DEPT_HEAD, or the COURSE INSTRUCTOR
+        if request.user.role != 'ADMIN' and exam.course.instructor != request.user and request.user.role != 'DEPT_HEAD':
             return Response(
                 {'error': 'You do not have permission to add questions to this exam'},
                 status=status.HTTP_403_FORBIDDEN

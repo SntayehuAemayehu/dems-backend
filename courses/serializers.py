@@ -50,34 +50,66 @@ class CourseSerializer(serializers.ModelSerializer):
     is_enrolled = serializers.SerializerMethodField()
     materials = CourseMaterialSerializer(many=True, read_only=True)
     assignments_count = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = Course
         fields = [
-            'id', 'course_code', 'title', 'description', 'credit_hours', 
-            'semester', 'academic_year', 'capacity', 'instructor', 'instructor_name',
-            'department', 'department_name', 'is_active', 'is_approved',
-            'enrolled_count', 'is_enrolled', 'created_at', 'materials', 'assignments_count',
+            'id',
+            'course_code',
+            'title',
+            'description',
+
+            # Credit hour fields
+            'class_credit_hours',
+            'lab_credit_hours',
+            'credit_hours',
+
+            'semester',
+            'academic_year',
+            'capacity',
+            'instructor',
+            'instructor_name',
+            'department',
+            'department_name',
+            'is_active',
+            'is_approved',
+            'enrolled_count',
+            'is_enrolled',
+            'created_at',
+            'materials',
+            'assignments_count',
             'is_live'
         ]
-        read_only_fields = ['created_at', 'is_approved', 'approved_by']
-    
+
+        read_only_fields = [
+            'created_at',
+            'is_approved',
+            'approved_by',
+            'credit_hours'
+        ]
+
     def get_instructor_name(self, obj):
         return obj.instructor.full_name if obj.instructor else None
-    
+
     def get_department_name(self, obj):
         return obj.department.name if obj.department else None
-    
+
     def get_is_enrolled(self, obj):
         request = self.context.get('request')
+
         if request and request.user.is_authenticated and request.user.role == 'STUDENT':
             try:
                 student = request.user.student_profile
-                return Enrollment.objects.filter(student=student, course=obj, status='ACTIVE').exists()
+                return Enrollment.objects.filter(
+                    student=student,
+                    course=obj,
+                    status='ACTIVE'
+                ).exists()
             except:
                 return False
+
         return False
-    
+
     def get_assignments_count(self, obj):
         return obj.assignments.count()
 

@@ -8,7 +8,9 @@ class Course(models.Model):
     course_code = models.CharField(max_length=20, unique=True)
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
-    credit_hours = models.IntegerField(default=3)
+    class_credit_hours = models.PositiveSmallIntegerField(default=1)
+    lab_credit_hours = models.PositiveSmallIntegerField(default=0)
+    credit_hours = models.PositiveSmallIntegerField(default=1)
     semester = models.CharField(max_length=10, default='1')
     academic_year = models.CharField(max_length=10, blank=True)
     capacity = models.IntegerField(default=30)
@@ -49,6 +51,13 @@ class Course(models.Model):
     @property
     def instructor_name(self):
         return self.instructor.full_name if self.instructor else None
+
+    def save(self, *args, **kwargs):
+        self.credit_hours = (
+        (self.class_credit_hours or 0) +
+        (self.lab_credit_hours or 0)
+    )
+        super().save(*args, **kwargs)
 
 
 class CourseMaterial(models.Model):
@@ -156,9 +165,11 @@ class Enrollment(models.Model):
 
     def update_course_grade(self):
         """Update grade for this enrollment based on ALL exams and assignments.
-           The final grade is only calculated when ALL items are graded."""
+           The final grade is calculated correctly and won't overwrite with F if data is missing."""
         from exams.models import ExamAttempt
         from courses.models import AssignmentSubmission
+        from utils.grading import calculate_grade
+        from decimal import Decimal
         
         # 1. Get all exam attempts for this course (must be GRADED)
         exam_attempts = ExamAttempt.objects.filter(
@@ -185,13 +196,11 @@ class Enrollment(models.Model):
         # Check if all exams are graded
         graded_exam_ids = set(attempt.exam_id for attempt in exam_attempts)
         all_exam_ids = set(exam.id for exam in all_exams)
-        
         all_exams_graded = len(graded_exam_ids) == len(all_exam_ids) if all_exams else True
         
         # Check if all assignments are graded
         graded_assignment_ids = set(sub.assignment_id for sub in assignment_submissions)
         all_assignment_ids = set(ass.id for ass in all_assignments)
-        
         all_assignments_graded = len(graded_assignment_ids) == len(all_assignment_ids) if all_assignments else True
         
         # 4. Calculate totals ONLY from graded items
@@ -211,12 +220,11 @@ class Enrollment(models.Model):
         self.total_marks_obtained = total_obtained if has_graded_items else None
         self.total_marks_possible = total_possible if has_graded_items else None
         
-        # 6. CRITICAL: Only calculate the FINAL GRADE if ALL items are graded
+        # 6. CRITICAL FIX: Only calculate the FINAL GRADE if ALL items are graded AND total_possible > 0
         if all_exams_graded and all_assignments_graded and total_possible > 0:
             percentage = (total_obtained / total_possible) * Decimal('100')
             self.percentage_score = percentage
             
-            from utils.grading import calculate_grade
             grade_info = calculate_grade(float(percentage))
             self.grade_letter = grade_info['letter']
             self.grade_points = grade_info['gpa']
@@ -225,12 +233,16 @@ class Enrollment(models.Model):
             if self.status != 'COMPLETED':
                 self.status = 'COMPLETED'
         else:
-            # If not all items are graded, keep it as ACTIVE and clear the letter grade
-            self.percentage_score = None
-            self.grade_letter = 'NON'
-            self.grade_points = Decimal('0.00')
-            if self.status == 'COMPLETED':
+            # ✅ SAFETY NET: If data is missing, DON'T reset the grade to F.
+            # Just keep it as ACTIVE if it was active.
+            if self.status == 'COMPLETED' and not has_graded_items:
                 self.status = 'ACTIVE'
+            
+            # Only clear the grade if it was previously an F and we now have no data
+            if not has_graded_items and self.grade_letter == 'F':
+                self.percentage_score = None
+                self.grade_letter = 'NON'
+                self.grade_points = Decimal('0.00')
         
         self.save()
         return self

@@ -182,7 +182,7 @@ class StudentProfileSerializer(serializers.ModelSerializer):
         model = StudentProfile
         fields = [
             'id', 'user', 'student_id', 'date_of_birth', 'gender', 'address',
-            'enrollment_date', 'current_semester', 'department', 'program',
+            'enrollment_date', 'year', 'current_semester', 'department', 'program',
             'cgpa', 'total_credits', 'payment_status', 'documents_verified',
             'is_enrolled', 'grade_8_certificate', 'grade_12_certificate',
             'transcript', 'other_documents', 'documents_submitted',
@@ -315,7 +315,7 @@ class DeptHeadStudentListSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = StudentProfile
-        fields = ['id', 'full_name', 'email', 'student_id', 'department', 'payment_status', 
+        fields = ['id', 'full_name', 'email', 'student_id', 'year', 'department', 'payment_status', 
                   'documents_verified', 'is_enrolled', 'cgpa', 'enrollment_date']
     
     def get_full_name(self, obj):
