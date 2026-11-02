@@ -2227,4 +2227,119 @@ class UpcomingExamWarningsView(APIView):
             'warnings': warnings
         })
 
+   # ============================================================
+# LIVE EXAM MONITORING VIEW
+# ============================================================
+
+class LiveExamMonitoringView(APIView):
+    """
+    Teacher can see students currently taking an exam.
+
+    GET /api/exams/<exam_id>/live-monitoring/
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, exam_id):
+
+        user = request.user
+
+        # Check permissions
+        if user.role not in ['TEACHER', 'ADMIN', 'DEPT_HEAD']:
+            return Response(
+                {'error': 'Permission denied'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Get exam
+        try:
+            exam = Exam.objects.get(id=exam_id)
+
+        except Exam.DoesNotExist:
+            return Response(
+                {'error': 'Exam not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Check teacher permission
+        if user.role == 'TEACHER' and exam.course.instructor != user:
+            return Response(
+                {'error': 'You can only monitor your own courses'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Check department head permission
+        if user.role == 'DEPT_HEAD':
+            try:
+                department = user.headed_department
+
+                if exam.course.department != department:
+                    return Response(
+                        {'error': 'You can only monitor exams in your department'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+
+            except Exception:
+                return Response(
+                    {'error': 'You are not assigned to a department'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+        # Get active exam attempts
+        attempts = ExamAttempt.objects.filter(
+            exam=exam,
+            status='IN_PROGRESS'
+        ).select_related(
+            'student__user'
+        ).order_by('-start_time')
+
+        result = []
+
+        for attempt in attempts:
+
+            latest_image = None
+
+            # Get latest proctoring image
+            try:
+                capture = ProctorImage.objects.filter(
+                    attempt=attempt
+                ).order_by('-captured_at').first()
+
+                if capture and capture.image:
+                    latest_image = request.build_absolute_uri(
+                        capture.image.url
+                    )
+
+            except Exception as e:
+                logger.warning(
+                    f"Could not retrieve latest image for attempt {attempt.id}: {e}"
+                )
+
+            result.append({
+                'attempt_id': attempt.id,
+                'student_id': attempt.student.student_id,
+                'student_name': attempt.student.user.full_name,
+                'started_at': attempt.start_time,
+                'end_time': attempt.end_time,
+                'face_verified': getattr(attempt, 'face_verified', False),
+                'face_match_confidence': getattr(
+                    attempt,
+                    'face_match_confidence',
+                    0
+                ),
+                'suspicious_events_count': getattr(
+                    attempt,
+                    'suspicious_events_count',
+                    0
+                ),
+                'latest_image': latest_image,
+                'status': attempt.status,
+            })
+
+        return Response({
+            'exam_id': exam.id,
+            'exam_title': exam.title,
+            'total_active': len(result),
+            'students': result
+        })
 
