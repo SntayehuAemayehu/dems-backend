@@ -5,6 +5,11 @@ from django.conf import settings
 from django.utils import timezone
 
 class Exam(models.Model):
+    EXAM_TYPE_CHOICES = [
+        ('QUIZ', 'Quiz'),
+        ('MID', 'Mid Exam'),
+        ('FINAL', 'Final Exam'),
+    ]
     course = models.ForeignKey('courses.Course', on_delete=models.CASCADE, related_name='exams')
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
@@ -17,14 +22,20 @@ class Exam(models.Model):
     proctoring_enabled = models.BooleanField(default=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
-    
+
+    exam_type = models.CharField(
+        max_length=10,
+        choices=EXAM_TYPE_CHOICES,
+        default='MID',
+    )
+
     def __str__(self):
         return f"{self.title} - {self.course.course_code}"
-    
+
     @property
     def course_title(self):
         return self.course.title
-    
+
     @property
     def course_code(self):
         return self.course.course_code
@@ -110,7 +121,6 @@ class ExamAttempt(models.Model):
     speech_events_10s = models.IntegerField(default=0)
     # In ExamAttempt model - ADD these fields
     heartbeat_history = models.JSONField(default=list, blank=True)
-    fullscreen_exit_count = models.IntegerField(default=0)
     # ✅ LOCKDOWN FIELDS
     is_locked = models.BooleanField(default=False)
     lock_reason = models.TextField(blank=True)

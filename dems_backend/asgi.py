@@ -15,7 +15,7 @@ from django.contrib.auth.models import AnonymousUser
 from django.urls import re_path
 from urllib.parse import parse_qs
 
-from exams.consumers import LiveClassConsumer
+from exams.consumers import LiveClassConsumer, ExamProctorConsumer
 from notifications.consumers import NotificationConsumer
 
 
@@ -54,6 +54,7 @@ class JWTAuthMiddleware(BaseMiddleware):
 # ============================================================
 websocket_urlpatterns = [
     re_path(r'^ws/live-class/(?P<course_id>\d+)/$', LiveClassConsumer.as_asgi()),
+    re_path(r'^ws/exam-proctor/(?P<exam_id>\d+)/$', ExamProctorConsumer.as_asgi()),
     re_path(r'^ws/notifications/$', NotificationConsumer.as_asgi()),
 ]
 

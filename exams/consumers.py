@@ -8,6 +8,7 @@ from urllib.parse import parse_qs
 
 User = get_user_model()
 
+
 class LiveClassConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         # Get course_id from URL
@@ -202,3 +203,142 @@ class LiveClassConsumer(AsyncWebsocketConsumer):
             except StudentProfile.DoesNotExist:
                 return False
         return False
+
+
+# ============================================================
+# EXAM PROCTOR CONSUMER
+# ============================================================
+class ExamProctorConsumer(AsyncWebsocketConsumer):
+    """
+    WebSocket for live exam proctoring.
+    Student sends camera → Teacher receives live video.
+    Also handles: warning, force_submit, pause, resume, add_time, chat
+    """
+
+    async def connect(self):
+        self.exam_id = self.scope['url_route']['kwargs']['exam_id']
+        self.room_group_name = f'exam_proctor_{self.exam_id}'
+        self.user = self.scope['user']
+
+        if not self.user.is_authenticated:
+            await self.close(code=4401)
+            return
+
+        await self.channel_layer.group_add(
+            self.room_group_name,
+            self.channel_name
+        )
+
+        await self.accept()
+
+        print(f"✅ ExamProctor: {self.user.full_name} ({self.user.role}) joined exam {self.exam_id}")
+
+        # Notify others
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {
+                'type': 'user_join',
+                'user': self.user.full_name,
+                'role': self.user.role,
+                'user_id': self.user.id,
+            }
+        )
+
+    async def disconnect(self, close_code):
+        if self.user.is_authenticated:
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {
+                    'type': 'user_leave',
+                    'user': self.user.full_name,
+                    'user_id': self.user.id,
+                }
+            )
+            await self.channel_layer.group_discard(
+                self.room_group_name,
+                self.channel_name
+            )
+            print(f"🔌 ExamProctor: {self.user.full_name} left exam {self.exam_id}")
+
+    async def receive(self, text_data):
+        try:
+            data = json.loads(text_data)
+            message_type = data.get('type')
+
+            # ========== WebRTC signaling ==========
+            if message_type in ['offer', 'answer', 'ice_candidate']:
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {
+                        'type': 'webrtc_signal',
+                        'data': data,
+                        'sender': self.user.full_name,
+                        'sender_role': self.user.role,
+                        'sender_id': self.user.id,
+                    }
+                )
+
+            # ========== Teacher control messages ==========
+            elif message_type in ['warning', 'force_submit', 'pause_exam', 'resume_exam', 'add_time', 'chat']:
+                # Only teacher can send these
+                if self.user.role != 'TEACHER':
+                    return
+
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {
+                        'type': 'control_message',
+                        'message_type': message_type,
+                        'data': data,
+                        'sender': self.user.full_name,
+                        'sender_id': self.user.id,
+                    }
+                )
+
+            elif message_type == 'ping':
+                await self.send(text_data=json.dumps({'type': 'pong'}))
+
+        except Exception as e:
+            print(f"ExamProctor receive error: {e}")
+
+    # ========== Handlers ==========
+
+    async def webrtc_signal(self, event):
+        # Don't send back to the sender
+        if event.get('sender_id') == self.user.id:
+            return
+        await self.send(text_data=json.dumps({
+            'type': event['data']['type'],
+            'offer': event['data'].get('offer'),
+            'answer': event['data'].get('answer'),
+            'candidate': event['data'].get('candidate'),
+            'sender': event['sender'],
+            'sender_role': event['sender_role'],
+            'sender_id': event['sender_id'],
+        }))
+
+    async def control_message(self, event):
+        # Send control messages to everyone in the room (mainly students)
+        await self.send(text_data=json.dumps({
+            'type': event['message_type'],
+            'message': event['data'].get('message'),
+            'minutes': event['data'].get('minutes'),          # for add_time
+            'target_user_id': event['data'].get('target_user_id'),  # optional: send to specific student
+            'sender': event['sender'],
+            'sender_id': event['sender_id'],
+        }))
+
+    async def user_join(self, event):
+        await self.send(text_data=json.dumps({
+            'type': 'user_join',
+            'user': event['user'],
+            'role': event.get('role'),
+            'user_id': event.get('user_id'),
+        }))
+
+    async def user_leave(self, event):
+        await self.send(text_data=json.dumps({
+            'type': 'user_leave',
+            'user': event['user'],
+            'user_id': event.get('user_id'),
+        }))

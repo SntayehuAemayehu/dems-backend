@@ -6,7 +6,14 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.db.models import Q
 from django.utils import timezone
-from .models import Course, CourseMaterial, Enrollment, Assignment, AssignmentSubmission
+from .models import (
+    COURSE_ACCESS_ENROLLMENT_STATUSES,
+    Course,
+    CourseMaterial,
+    Enrollment,
+    Assignment,
+    AssignmentSubmission,
+)
 from .serializers import (
     CourseSerializer, CourseMaterialSerializer, EnrollmentSerializer,
     AssignmentSerializer, AssignmentSubmissionSerializer
@@ -29,13 +36,14 @@ class CourseListView(generics.ListCreateAPIView):
         if user.role == 'STUDENT':
             try:
                 student = StudentProfile.objects.get(user=user)
-                if student.is_enrolled:
-                    queryset = queryset.filter(
-                        department__name=student.department,
-                        is_approved=True
-                    )
-                else:
-                    return Course.objects.none()
+                active_enrollments = Enrollment.objects.filter(
+                    student=student,
+                    status__in=COURSE_ACCESS_ENROLLMENT_STATUSES
+                ).values_list('course_id', flat=True)
+                queryset = queryset.filter(
+                    Q(pk__in=active_enrollments)
+                    | Q(is_approved=True, department__name=student.department)
+                )
             except StudentProfile.DoesNotExist:
                 return Course.objects.none()
 
@@ -94,10 +102,15 @@ class CourseDetailView(generics.RetrieveUpdateDestroyAPIView):
         if user.role == 'STUDENT':
             try:
                 student = StudentProfile.objects.get(user=user)
-                if student.is_enrolled:
-                    return Course.objects.filter(department__name=student.department)
-                return Course.objects.none()
-            except:
+                active_enrollments = Enrollment.objects.filter(
+                    student=student,
+                    status__in=COURSE_ACCESS_ENROLLMENT_STATUSES
+                ).values_list('course_id', flat=True)
+                return Course.objects.filter(
+                    Q(pk__in=active_enrollments)
+                    | Q(is_approved=True, department__name=student.department)
+                ).distinct()
+            except StudentProfile.DoesNotExist:
                 return Course.objects.none()
         return Course.objects.all()
     
@@ -163,7 +176,11 @@ class CourseMaterialView(generics.ListCreateAPIView):
         if user.role == 'STUDENT':
             try:
                 student = StudentProfile.objects.get(user=user)
-                if student.is_enrolled and Enrollment.objects.filter(student=student, course_id=course_id, status='ACTIVE').exists():
+                if Enrollment.objects.filter(
+                    student=student,
+                    course_id=course_id,
+                    status__in=COURSE_ACCESS_ENROLLMENT_STATUSES,
+                ).exists():
                     return CourseMaterial.objects.filter(course_id=course_id)
                 return CourseMaterial.objects.none()
             except StudentProfile.DoesNotExist:
@@ -294,27 +311,31 @@ class EnrollmentView(generics.ListCreateAPIView):
             return Response({'error': 'Only students can enroll'}, status=status.HTTP_403_FORBIDDEN)
         
         course_id = request.data.get('course')
+        if not course_id:
+            return Response({'error': 'Course is required'}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
             student = StudentProfile.objects.get(user=request.user)
         except StudentProfile.DoesNotExist:
             return Response({'error': 'Student profile not found'}, status=status.HTTP_400_BAD_REQUEST)
         
+        try:
+            course = Course.objects.get(id=course_id)
+        except (Course.DoesNotExist, TypeError, ValueError):
+            return Response({'error': 'Course not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        existing_enrollment = Enrollment.objects.filter(student=student, course=course).first()
+        if existing_enrollment and existing_enrollment.status in COURSE_ACCESS_ENROLLMENT_STATUSES:
+            serializer = self.get_serializer(existing_enrollment)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
         if not student.is_enrolled:
             return Response({'error': 'Your account is not activated. Please contact registrar.'}, 
                           status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            course = Course.objects.get(id=course_id)
-        except Course.DoesNotExist:
-            return Response({'error': 'Course not found'}, status=status.HTTP_404_NOT_FOUND)
-        
-        if course.department.name != student.department:
+
+        if course.department and course.department.name.strip().casefold() != student.department.strip().casefold():
             return Response({'error': 'You can only enroll in courses within your department'}, 
                           status=status.HTTP_400_BAD_REQUEST)
-        
-        if Enrollment.objects.filter(student=student, course=course).exists():
-            return Response({'error': 'Already enrolled'}, status=status.HTTP_400_BAD_REQUEST)
         
         if student.payment_status != 'VERIFIED':
             return Response({'error': 'Payment not verified'}, status=status.HTTP_400_BAD_REQUEST)
@@ -325,9 +346,15 @@ class EnrollmentView(generics.ListCreateAPIView):
         if course.enrolled_count >= course.capacity:
             return Response({'error': 'Course is full'}, status=status.HTTP_400_BAD_REQUEST)
         
-        enrollment = Enrollment.objects.create(student=student, course=course, status='ACTIVE')
+        if existing_enrollment:
+            existing_enrollment.status = 'ACTIVE'
+            existing_enrollment.save(update_fields=['status'])
+            enrollment = existing_enrollment
+        else:
+            enrollment = Enrollment.objects.create(student=student, course=course, status='ACTIVE')
         serializer = self.get_serializer(enrollment)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        response_status = status.HTTP_200_OK if existing_enrollment else status.HTTP_201_CREATED
+        return Response(serializer.data, status=response_status)
 
 
 class CourseApprovalView(APIView):
@@ -508,7 +535,11 @@ class AssignmentListView(generics.ListCreateAPIView):
         if user.role == 'STUDENT':
             try:
                 student = StudentProfile.objects.get(user=user)
-                if student.is_enrolled and Enrollment.objects.filter(student=student, course_id=course_id, status='ACTIVE').exists():
+                if Enrollment.objects.filter(
+                    student=student,
+                    course_id=course_id,
+                    status__in=COURSE_ACCESS_ENROLLMENT_STATUSES,
+                ).exists():
                     return Assignment.objects.filter(course_id=course_id)
                 return Assignment.objects.none()
             except StudentProfile.DoesNotExist:
@@ -759,7 +790,11 @@ class StudentCourseMaterialsView(generics.ListAPIView):
         
         try:
             student = StudentProfile.objects.get(user=user)
-            if student.is_enrolled and Enrollment.objects.filter(student=student, course_id=course_id, status='ACTIVE').exists():
+            if Enrollment.objects.filter(
+                student=student,
+                course_id=course_id,
+                status__in=COURSE_ACCESS_ENROLLMENT_STATUSES,
+            ).exists():
                 return CourseMaterial.objects.filter(course_id=course_id)
             return CourseMaterial.objects.none()
         except StudentProfile.DoesNotExist:
@@ -780,10 +815,10 @@ class StudentCourseAssignmentsView(generics.ListAPIView):
         
         try:
             student = StudentProfile.objects.get(user=user)
-            if student.is_enrolled and Enrollment.objects.filter(
+            if Enrollment.objects.filter(
                 student=student, 
                 course_id=course_id, 
-                status='ACTIVE'
+                status__in=COURSE_ACCESS_ENROLLMENT_STATUSES
             ).exists():
                 return Assignment.objects.filter(
                     course_id=course_id
@@ -844,9 +879,6 @@ class StudentAssignmentSubmissionView(generics.CreateAPIView):
             student = StudentProfile.objects.get(user=request.user)
         except StudentProfile.DoesNotExist:
             return Response({'error': 'Student profile not found'}, status=status.HTTP_404_NOT_FOUND)
-        
-        if not student.is_enrolled:
-            return Response({'error': 'Your account is not activated'}, status=status.HTTP_400_BAD_REQUEST)
         
         if not Enrollment.objects.filter(student=student, course=assignment.course, status='ACTIVE').exists():
             return Response({'error': 'You are not enrolled in this course'}, status=status.HTTP_403_FORBIDDEN)
@@ -941,6 +973,7 @@ class StudentAssignmentResultsView(APIView):
             results.append({
                 'id': submission.id,
                 'title': submission.assignment.title,
+                'course_id': submission.assignment.course_id,
                 'course_title': submission.assignment.course.title,
                 'course_code': submission.assignment.course.course_code,
                 'total_marks': float(submission.assignment.total_marks),

@@ -4,6 +4,10 @@ from django.db import models
 from django.conf import settings
 from django.utils import timezone
 from decimal import Decimal
+
+COURSE_ACCESS_ENROLLMENT_STATUSES = ('ACTIVE', 'COMPLETED')
+
+
 class Course(models.Model):
     course_code = models.CharField(max_length=20, unique=True)
     title = models.CharField(max_length=200)

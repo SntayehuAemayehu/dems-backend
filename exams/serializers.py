@@ -59,6 +59,9 @@ class ExamAttemptSerializer(serializers.ModelSerializer):
     student_name = serializers.SerializerMethodField()
     exam_title = serializers.SerializerMethodField()
     course_title = serializers.SerializerMethodField()
+    exam_type = serializers.CharField(source='exam.exam_type', read_only=True)
+    course_id = serializers.IntegerField(source='exam.course_id', read_only=True)
+    course_code = serializers.CharField(source='exam.course.course_code', read_only=True)
     student_id = serializers.SerializerMethodField()
     
     class Meta:

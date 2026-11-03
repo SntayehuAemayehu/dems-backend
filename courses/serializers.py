@@ -1,7 +1,14 @@
 # courses/serializers.py - COMPLETE FIXED VERSION
 
 from rest_framework import serializers
-from .models import Course, CourseMaterial, Enrollment, Assignment, AssignmentSubmission
+from .models import (
+    COURSE_ACCESS_ENROLLMENT_STATUSES,
+    Course,
+    CourseMaterial,
+    Enrollment,
+    Assignment,
+    AssignmentSubmission,
+)
 
 
 class CourseMaterialSerializer(serializers.ModelSerializer):
@@ -103,7 +110,7 @@ class CourseSerializer(serializers.ModelSerializer):
                 return Enrollment.objects.filter(
                     student=student,
                     course=obj,
-                    status='ACTIVE'
+                    status__in=COURSE_ACCESS_ENROLLMENT_STATUSES
                 ).exists()
             except:
                 return False
