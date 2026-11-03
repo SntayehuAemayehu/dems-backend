@@ -1069,6 +1069,8 @@ class StudentAllCourseGradesView(APIView):
             'student_name': student.user.full_name,
             'student_id': student.student_id,
             'department': student.department,
+            'year': student.year,
+            'semester': student.current_semester,
             'cgpa': float(student.cgpa) if student.cgpa else 0,
             'total_credits': student.total_credits,
             'courses': results

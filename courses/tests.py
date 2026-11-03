@@ -165,3 +165,14 @@ class StudentCourseContentTests(TestCase):
         self.assertEqual(response.status_code, 200)
         result = next(row for row in response.data if row['id'] == submission.id)
         self.assertEqual(result['course_id'], self.course.id)
+
+    def test_my_grades_includes_student_year_and_semester(self):
+        self.student.year = 3
+        self.student.current_semester = 5
+        self.student.save(update_fields=['year', 'current_semester'])
+
+        response = self.client.get('/api/courses/my-grades/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['year'], 3)
+        self.assertEqual(response.data['semester'], 5)
