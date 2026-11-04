@@ -15,6 +15,7 @@ urlpatterns = [
     path('api/analytics/', include('analytics.urls')),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('api/chat/', include('chat.urls')),
+    path('api/news/', include('news.urls')),
 ]
 
 if settings.DEBUG:

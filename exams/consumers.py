@@ -105,6 +105,38 @@ class LiveClassConsumer(AsyncWebsocketConsumer):
                         'sender_id': self.user.id
                     }
                 )
+            elif message_type in ['hand_raise', 'hand_lower']:
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {
+                        'type': message_type,
+                        'user': self.user.full_name,
+                        'user_id': self.user.id
+                    }
+                )
+            elif message_type == 'remove_student':
+                if self.user.role != 'TEACHER':
+                    await self.send(text_data=json.dumps({
+                        'type': 'error',
+                        'message': 'Only the teacher can remove students.'
+                    }))
+                    return
+
+                target_id = data.get('target_id')
+                if target_id is None:
+                    await self.send(text_data=json.dumps({
+                        'type': 'error',
+                        'message': 'A student must be selected.'
+                    }))
+                    return
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {
+                        'type': 'student_removed',
+                        'target_id': str(target_id),
+                        'removed_by': self.user.full_name
+                    }
+                )
             elif message_type == 'toggle_video':
                 await self.channel_layer.group_send(
                     self.room_group_name,
@@ -147,8 +179,31 @@ class LiveClassConsumer(AsyncWebsocketConsumer):
             'data': event['data'],
             'sender': event['sender'],
             'sender_role': event['sender_role'],
-            'sender_id': event.get('sender_id')
+            'sender_id': event.get('sender_id'),
+            'target_id': event['data'].get('target_id')
         }))
+
+    async def hand_raise(self, event):
+        await self.send(text_data=json.dumps({
+            'type': 'hand_raise',
+            'user': event['user'],
+            'user_id': event['user_id']
+        }))
+
+    async def hand_lower(self, event):
+        await self.send(text_data=json.dumps({
+            'type': 'hand_lower',
+            'user': event['user'],
+            'user_id': event['user_id']
+        }))
+
+    async def student_removed(self, event):
+        if str(event['target_id']) == str(self.user.id):
+            await self.send(text_data=json.dumps({
+                'type': 'student_removed',
+                'target_id': event['target_id'],
+                'removed_by': event['removed_by']
+            }))
     
     async def user_join(self, event):
         await self.send(text_data=json.dumps({
