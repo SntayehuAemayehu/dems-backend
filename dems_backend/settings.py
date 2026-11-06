@@ -7,7 +7,7 @@ from decouple import config
 import dj_database_url
 import sqlite3
 from django.db.backends.signals import connection_created
-
+import mimetypes
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, os.path.join(BASE_DIR, 'middleware'))
 
@@ -317,3 +317,9 @@ def _sqlite_pragmas(sender, connection, **kwargs):
 
 connection_created.connect(_sqlite_pragmas)
 DAPHNE_TIMEOUT = 120
+#for news
+mimetypes.add_type("video/mp4", ".mp4", True)
+mimetypes.add_type("video/webm", ".webm", True)
+mimetypes.add_type("video/quicktime", ".mov", True)
+mimetypes.add_type("video/x-msvideo", ".avi", True)
+
