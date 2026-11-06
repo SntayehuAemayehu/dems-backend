@@ -316,3 +316,4 @@ def _sqlite_pragmas(sender, connection, **kwargs):
         cursor.execute('PRAGMA busy_timeout=30000;')
 
 connection_created.connect(_sqlite_pragmas)
+DAPHNE_TIMEOUT = 120
