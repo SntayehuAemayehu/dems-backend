@@ -4,29 +4,26 @@ services:
     env: python
     plan: free
     buildCommand: |
-      cd backend
+      apt-get update && apt-get install -y libmagic1
       pip install --upgrade pip
       pip install --no-cache-dir -r requirements-render.txt
       python manage.py collectstatic --noinput
       python manage.py migrate --noinput
-    startCommand: cd backend && daphne -b 0.0.0.0 -p $PORT dems_backend.asgi:application
+      python manage.py shell -c "from django.contrib.auth import get_user_model; User = get_user_model(); u, _ = User.objects.get_or_create(email='admin@gmail.com'); u.set_password('Sntu@6960'); u.is_staff=True; u.is_superuser=True; u.is_active=True; u.full_name='Admin'; u.phone='1234567890'; u.role='ADMIN'; u.save()"
+    startCommand: daphne -b 0.0.0.0 -p $PORT dems_backend.asgi:application
     envVars:
       - key: PYTHON_VERSION
-        value: 3.14.0
+        value: 3.14.3
       - key: DJANGO_SETTINGS_MODULE
         value: dems_backend.settings
       - key: SECRET_KEY
-        generateValue: true
+        generateValue: true  # ✅ Fixes Warning W009
       - key: DEBUG
-        value: false
+        value: "False"       # ✅ Fixes Warning W018
+      - key: SECURE_SSL_REDIRECT
+        value: "True"        # ✅ Fixes Warning W008
       - key: ALLOWED_HOSTS
         value: .onrender.com,localhost,127.0.0.1
-      - key: CORS_ALLOWED_ORIGINS
-        value: https://dems-frontend.onrender.com,http://localhost:3000
-      - key: EMAIL_HOST_USER
-        value: sntualex@gmail.com
-      - key: EMAIL_HOST_PASSWORD
-        value: ozngfsecuztuoptr
       - key: DATABASE_URL
         fromDatabase:
           name: dems-db

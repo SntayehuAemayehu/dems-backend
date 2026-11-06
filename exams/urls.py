@@ -32,6 +32,8 @@ urlpatterns = [
     # exams/urls.py - Add these
     path('bonus-marks/', views.BonusMarksView.as_view(), name='bonus-marks'),
     path('edit-answer/', views.EditAnswerView.as_view(), name='edit-answer'),
+    path('course/<int:course_id>/proctoring-images/', views.CourseProctoringImagesView.as_view(), name='course-proctoring-images'),
+    path('<int:exam_id>/live-monitoring/', views.LiveExamMonitoringView.as_view(), name='live-monitoring'),
     # Flagging
     path('<int:attempt_id>/flag/', views.FlagExamView.as_view(), name='flag-exam'),
     path('<int:attempt_id>/unflag/', views.UnflagExamView.as_view(), name='unflag-exam'),
@@ -47,6 +49,6 @@ urlpatterns = [
     path('attempt/<int:attempt_id>/recordings/', views.ExamRecordingListView.as_view(), name='exam-recordings-list'),
     path('attempt/<int:attempt_id>/env-check/', views.EnvironmentCheckView.as_view(), name='env-check'),
     path('count-faces/', CountFacesView.as_view(), name='count-faces'),
-    # ... existing paths ...
+    
 
 ]

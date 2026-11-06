@@ -79,6 +79,7 @@ class StudentProfile(models.Model):
     gender = models.CharField(max_length=10, choices=GENDER_CHOICES, null=True, blank=True)
     address = models.TextField(blank=True)
     enrollment_date = models.DateField(default=timezone.now)
+    year = models.PositiveSmallIntegerField(default=1)
     current_semester = models.IntegerField(default=1)
     department = models.CharField(max_length=100, blank=True)
     program = models.CharField(max_length=100, blank=True)
@@ -163,32 +164,43 @@ class StudentProfile(models.Model):
         self.save()
         return self.cgpa
     
-    def get_overall_grade_summary(self):
+    class StudentProfile(models.Model):
+    # ... your existing fields ...
+
+     def get_overall_grade_summary(self):
         """Get overall grade summary for all courses"""
         from courses.models import Enrollment
-        
+
         enrollments = Enrollment.objects.filter(student=self)
         results = []
         total_marks_obtained = 0
         total_marks_possible = 0
-        
+
         for enrollment in enrollments:
             enrollment.update_course_grade()
             summary = enrollment.get_grade_summary()
             results.append(summary)
-            
+
             if enrollment.total_marks_obtained:
                 total_marks_obtained += float(enrollment.total_marks_obtained)
+
             if enrollment.total_marks_possible:
                 total_marks_possible += float(enrollment.total_marks_possible)
-        
+
         overall_percentage = 0
         if total_marks_possible > 0:
-            overall_percentage = (total_marks_obtained / total_marks_possible) * 100
-        
+            overall_percentage = (
+                total_marks_obtained / total_marks_possible
+            ) * 100
+
         from utils.grading import calculate_grade
-        overall_grade = calculate_grade(overall_percentage)
-        
+        grade_result = calculate_grade(overall_percentage)
+
+        if isinstance(grade_result, tuple):
+            overall_letter, overall_points = grade_result
+        else:
+            overall_letter, overall_points = grade_result, 0.0
+
         return {
             'student_name': self.user.full_name,
             'student_id': self.student_id,
@@ -198,12 +210,16 @@ class StudentProfile(models.Model):
             'total_marks_obtained': round(total_marks_obtained, 2),
             'total_marks_possible': round(total_marks_possible, 2),
             'overall_percentage': round(overall_percentage, 2),
-            'overall_grade': overall_grade,
+            'overall_grade': overall_letter,
+            'overall_grade_points': round(overall_points, 2),
             'courses': results,
-            'completed_courses': len([r for r in results if r['status'] == 'COMPLETED']),
-            'active_courses': len([r for r in results if r['status'] == 'ACTIVE']),
+            'completed_courses': len([
+                r for r in results if r['status'] == 'COMPLETED'
+            ]),
+            'active_courses': len([
+                r for r in results if r['status'] == 'ACTIVE'
+            ]),
         }
-
      
 class TeacherProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='teacher_profile')

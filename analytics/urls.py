@@ -9,7 +9,7 @@ from .views import (
     PaymentScheduleUpdateStatusView,
 )
 from . import ai_views  # ✅ Import ai_views
-
+from .views_motion import LivePulseView, SparklineDataView, ActivityFeedView
 urlpatterns = [
     # Analytics endpoints
     path('dashboard/', views.DashboardAnalyticsView.as_view(), name='dashboard-analytics'),
@@ -121,6 +121,18 @@ urlpatterns = [
     path('batch/delete/courses/', views.BatchDeleteView.as_view(), name='batch-delete-courses'),
     path('batch/delete/users/', views.BatchDeleteView.as_view(), name='batch-delete-users'),
     path('batch/delete/payments/', views.BatchDeleteView.as_view(), name='batch-delete-payments'),
+    #real animation
+    path('live-pulse/', LivePulseView.as_view()),
+    path('sparkline/', SparklineDataView.as_view()),
+    path('activity-feed/', ActivityFeedView.as_view()),
+
+
+
+
+
+
+
+
 ]
 
 

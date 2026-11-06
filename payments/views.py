@@ -14,7 +14,11 @@ from django.db.models import Sum, Q
 from django.utils import timezone
 from django.http import FileResponse
 from django.conf import settings
-import qrcode
+try:
+    import qrcode
+    QRCODE_AVAILABLE = True
+except ImportError:
+    QRCODE_AVAILABLE = False
 from io import BytesIO
 from django.http import HttpResponse
 from django.conf import settings
@@ -904,17 +908,28 @@ class MyBalanceView(APIView):
         except StudentProfile.DoesNotExist:
             return Response({'balance_due': 0, 'payment_status': 'PENDING'})
         
-        # ✅ Check if student has overdue payments
-        from analytics.models import StudentPaymentSchedule
-        overdue_schedules = StudentPaymentSchedule.objects.filter(
-            student=student,
-            status__in=['PENDING', 'OVERDUE']
-        )
+        from analytics.models import StudentPaymentSchedule, FeeStructure
         
         total_due = 0
-        for schedule in overdue_schedules:
-            total_due += float(schedule.total_amount)
         
+        # 1. Check for active payment schedules
+        schedules = StudentPaymentSchedule.objects.filter(
+            student=student,
+            status__in=['PENDING', 'OVERDUE', 'LOCKED']
+        )
+        
+        for schedule in schedules:
+            total_due += float(schedule.total_amount)
+            
+        # 2. If no schedules exist, check the fee structure for their department
+        if not schedules.exists() and student.payment_status != 'VERIFIED':
+            fee = FeeStructure.objects.filter(
+                department__name=student.department, 
+                is_active=True
+            ).first()
+            if fee:
+                total_due = float(fee.amount)
+                
         return Response({
             'balance_due': total_due,
             'payment_status': student.payment_status,

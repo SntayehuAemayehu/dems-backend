@@ -1,5 +1,7 @@
 # exams/views.py - COMPLETE WITH ALL VIEWS
 from decimal import Decimal
+from django.core.exceptions import ObjectDoesNotExist
+from django.db.models import Count
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -9,7 +11,7 @@ from .models import Exam, Question, ExamAttempt, Answer, ExamRecording
 from .serializers import ExamSerializer, QuestionSerializer, ExamAttemptSerializer
 from accounts.models import StudentProfile
 from notifications.utils import send_notification
-from courses.models import Course, Enrollment
+from courses.models import COURSE_ACCESS_ENROLLMENT_STATUSES, Course, Enrollment
 from proctoring.models import ProctorSession, ProctorImage
 from accounts.face_service import extract_embedding, compare_embeddings
 import logging
@@ -45,20 +47,16 @@ class ExamListView(generics.ListCreateAPIView):
         elif user.role == 'STUDENT':
             try:
                 student = StudentProfile.objects.get(user=user)
-                if not student.is_enrolled:
-                    return Exam.objects.none()
-                
                 enrolled_courses = Enrollment.objects.filter(
                     student=student, 
-                    status='ACTIVE'
+                    status__in=COURSE_ACCESS_ENROLLMENT_STATUSES
                 ).values_list('course_id', flat=True)
                 
                 return Exam.objects.filter(
                     course__in=enrolled_courses, 
-                    is_published=True,
-                    course__department__name=student.department
+                    is_published=True
                 )
-            except:
+            except StudentProfile.DoesNotExist:
                 return Exam.objects.none()
         
         elif user.role == 'DEPT_HEAD':
@@ -159,7 +157,8 @@ class QuestionView(generics.ListCreateAPIView):
         except Exam.DoesNotExist:
             return Response({'error': 'Exam not found'}, status=status.HTTP_404_NOT_FOUND)
         
-        if request.user.role != 'ADMIN' and exam.created_by != request.user:
+        # ✅ FIX: Allow if user is ADMIN, DEPT_HEAD, or the COURSE INSTRUCTOR
+        if request.user.role != 'ADMIN' and exam.course.instructor != request.user and request.user.role != 'DEPT_HEAD':
             return Response(
                 {'error': 'You do not have permission to add questions to this exam'},
                 status=status.HTTP_403_FORBIDDEN
@@ -318,13 +317,11 @@ class StartExamView(APIView):
         except StudentProfile.DoesNotExist:
             return Response({'error': 'Student profile not found'}, status=status.HTTP_400_BAD_REQUEST)
         
-        if not student.is_enrolled:
-            return Response({'error': 'Your account is not activated'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        if exam.course.department.name != student.department:
-            return Response({'error': 'You can only take exams within your department'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        if not Enrollment.objects.filter(student=student, course=exam.course, status='ACTIVE').exists():
+        if not Enrollment.objects.filter(
+            student=student,
+            course=exam.course,
+            status__in=COURSE_ACCESS_ENROLLMENT_STATUSES,
+        ).exists():
             return Response({'error': 'You are not enrolled in this course'}, status=status.HTTP_400_BAD_REQUEST)
         
         if ExamAttempt.objects.filter(student=student, exam=exam, status__in=['IN_PROGRESS', 'SUBMITTED']).exists():
@@ -2144,38 +2141,39 @@ class VerifyFaceIdentityView(APIView):
     def post(self, request):
         from accounts.views import VerifyFaceAtExamView
         return VerifyFaceAtExamView().post(request)
-# exams/views.py — add this class
-from accounts.face_service import extract_face_embedding
-import face_recognition
-import numpy as np
-import base64
-from io import BytesIO
-from PIL import Image
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import permissions
-
 class CountFacesView(APIView):
+    """
+    Count faces in an image using UniFace RetinaFace (already installed).
+    Replaces the old face_recognition/dlib implementation to avoid 500MB dlib.
+    """
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
         image_data = request.data.get('image_data')
         if not image_data:
             return Response({'face_count': 0, 'error': 'No image'}, status=400)
-        
+
         try:
-            # Decode image
-            if ',' in image_data:
-                image_data = image_data.split(',')[1]
-            image_bytes = base64.b64decode(image_data)
-            pil = Image.open(BytesIO(image_bytes)).convert('RGB')
-            np_image = np.array(pil, dtype=np.uint8)
+            import cv2
+            import numpy as np
+            import base64
+            from accounts.face_service import retina
 
-            # Count faces using HOG
-            face_locations = face_recognition.face_locations(np_image, number_of_times_to_upsample=1, model='hog')
-            count = len(face_locations)
+            # Strip the data URL prefix if present
+            cleaned = image_data.split(',')[1] if ',' in image_data else image_data
 
-            return Response({'face_count': count})
+            # Decode to numpy array, then to OpenCV BGR image
+            img_bytes = base64.b64decode(cleaned)
+            np_arr = np.frombuffer(img_bytes, np.uint8)
+            img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+            if img is None:
+                return Response({'face_count': 0, 'error': 'Invalid image'}, status=200)
+
+            # RetinaFace detects faces — returns a list
+            faces = retina.detect(img)
+            return Response({'face_count': len(faces)})
+
         except Exception as e:
             return Response({'face_count': 0, 'error': str(e)}, status=200)
 
@@ -2225,4 +2223,218 @@ class UpcomingExamWarningsView(APIView):
             'warnings': warnings
         })
 
+   # ============================================================
+# LIVE EXAM MONITORING VIEW
+# ============================================================
 
+class LiveExamMonitoringView(APIView):
+    """
+    Teacher can see students currently taking an exam.
+
+    GET /api/exams/<exam_id>/live-monitoring/
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, exam_id):
+
+        user = request.user
+
+        # Check permissions
+        if user.role not in ['TEACHER', 'ADMIN', 'DEPT_HEAD']:
+            return Response(
+                {'error': 'Permission denied'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Get exam
+        try:
+            exam = Exam.objects.get(id=exam_id)
+
+        except Exam.DoesNotExist:
+            return Response(
+                {'error': 'Exam not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Check teacher permission
+        if user.role == 'TEACHER' and exam.course.instructor != user:
+            return Response(
+                {'error': 'You can only monitor your own courses'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Check department head permission
+        if user.role == 'DEPT_HEAD':
+            try:
+                department = user.headed_department
+
+                if exam.course.department != department:
+                    return Response(
+                        {'error': 'You can only monitor exams in your department'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+
+            except Exception:
+                return Response(
+                    {'error': 'You are not assigned to a department'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+        # Get active exam attempts
+        attempts = ExamAttempt.objects.filter(
+            exam=exam,
+            status='IN_PROGRESS'
+        ).select_related(
+            'student__user'
+        ).order_by('-start_time')
+
+        result = []
+
+        for attempt in attempts:
+
+            latest_image = None
+
+            # Get latest proctoring image
+            try:
+                capture = ProctorImage.objects.filter(
+                    attempt=attempt
+                ).order_by('-capture_time').first()
+
+                if capture and capture.image:
+                    latest_image = request.build_absolute_uri(
+                        capture.image.url
+                    )
+
+            except Exception as e:
+                logger.warning(
+                    f"Could not retrieve latest image for attempt {attempt.id}: {e}"
+                )
+
+            result.append({
+                'attempt_id': attempt.id,
+                'student_id': attempt.student.student_id,
+                'user_id': attempt.student.user_id,
+                'student_name': attempt.student.user.full_name,
+                'started_at': attempt.start_time,
+                'end_time': attempt.end_time,
+                'face_verified': getattr(attempt, 'face_verified', False),
+                'face_match_confidence': getattr(
+                    attempt,
+                    'face_match_confidence',
+                    0
+                ),
+                'suspicious_events_count': getattr(
+                    attempt,
+                    'suspicious_events_count',
+                    0
+                ),
+                'latest_image': latest_image,
+                'status': attempt.status,
+            })
+
+        return Response({
+            'exam_id': exam.id,
+            'exam_title': exam.title,
+            'total_active': len(result),
+            'students': result
+        })
+
+
+class CourseProctoringImagesView(APIView):
+    """List captured proctoring images for one course and exam category."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, course_id):
+        user = request.user
+        if user.role not in ['TEACHER', 'ADMIN', 'DEPT_HEAD']:
+            return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            course = Course.objects.select_related('department', 'instructor').get(id=course_id)
+        except Course.DoesNotExist:
+            return Response({'error': 'Course not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if user.role == 'TEACHER' and course.instructor_id != user.id:
+            return Response(
+                {'error': 'You can only view proctoring images for your courses'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if user.role == 'DEPT_HEAD':
+            try:
+                if course.department_id != user.headed_department.id:
+                    return Response(
+                        {'error': 'You can only view images for courses in your department'},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+            except (AttributeError, ObjectDoesNotExist):
+                return Response(
+                    {'error': 'You are not assigned to a department'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+        exam_type = request.query_params.get('exam_type', '').upper()
+        valid_exam_types = {choice[0] for choice in Exam.EXAM_TYPE_CHOICES}
+        if exam_type not in valid_exam_types:
+            return Response(
+                {'error': 'exam_type must be QUIZ, MID, or FINAL'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        images = ProctorImage.objects.filter(
+            attempt__exam__course=course,
+            attempt__exam__exam_type=exam_type,
+        ).select_related(
+            'attempt__student__user',
+            'attempt__exam',
+        ).order_by('-capture_time', '-id')
+
+        student_id = request.query_params.get('student_id')
+        if student_id is not None:
+            if not student_id.isdecimal():
+                return Response(
+                    {'error': 'student_id must be a valid student profile ID'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            images = images.filter(attempt__student_id=student_id)
+
+        students = images.values(
+            'attempt__student_id',
+            'attempt__student__user__full_name',
+            'attempt__student__student_id',
+        ).annotate(image_count=Count('id')).order_by(
+            'attempt__student__user__full_name',
+            'attempt__student_id',
+        )
+
+        return Response({
+            'course_id': course.id,
+            'course_title': course.title,
+            'exam_type': exam_type,
+            'total_images': images.count(),
+            'students': [
+                {
+                    'id': student['attempt__student_id'],
+                    'name': student['attempt__student__user__full_name'],
+                    'student_id': student['attempt__student__student_id'],
+                    'image_count': student['image_count'],
+                }
+                for student in students
+            ],
+            'selected_student_id': int(student_id) if student_id is not None else None,
+            'images': [
+                {
+                    'id': image.id,
+                    'image': request.build_absolute_uri(image.image.url) if image.image else None,
+                    'capture_time': image.capture_time,
+                    'is_suspicious': image.is_suspicious,
+                    'suspicious_reason': image.suspicious_reason,
+                    'exam_id': image.attempt.exam_id,
+                    'exam_title': image.attempt.exam.title,
+                    'attempt_id': image.attempt_id,
+                    'student_name': image.attempt.student.user.full_name,
+                    'student_id': image.attempt.student.student_id,
+                }
+                for image in images
+            ],
+        })
