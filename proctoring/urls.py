@@ -24,6 +24,7 @@ urlpatterns = [
     
     # Review endpoints
     path('review/', views.ReviewProctoringView.as_view(), name='review-proctoring'),
+    path('review/students/', views.ReviewStudentsView.as_view(), name='review-students'),
     path('review/<int:session_id>/', views.ReviewProctoringDetailView.as_view(), name='review-proctoring-detail'),
     path('review/<int:session_id>/update/', views.ReviewProctoringUpdateView.as_view(), name='review-proctoring-update'),
     

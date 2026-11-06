@@ -24,6 +24,7 @@ urlpatterns = [
     
     # ✅ TEACHER COURSE GRADES
     path('teacher/course/<int:course_id>/grades/', views.TeacherCourseGradesView.as_view(), name='teacher-course-grades'),
+    path('<int:course_id>/ai-chat/', views.CourseAIChatView.as_view(), name='course-ai-chat'),
     # Department Head
     path('dept/students/', views.DeptStudentListView.as_view(), name='dept-students'),
     path('dept/courses/', views.DeptCourseListView.as_view(), name='dept-courses'),

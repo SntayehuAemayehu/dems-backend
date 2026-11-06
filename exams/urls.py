@@ -34,6 +34,7 @@ urlpatterns = [
     path('edit-answer/', views.EditAnswerView.as_view(), name='edit-answer'),
     path('course/<int:course_id>/proctoring-images/', views.CourseProctoringImagesView.as_view(), name='course-proctoring-images'),
     path('<int:exam_id>/live-monitoring/', views.LiveExamMonitoringView.as_view(), name='live-monitoring'),
+    path('<int:exam_id>/examiner-assignments/', views.ExaminerAssignmentView.as_view(), name='examiner-assignments'),
     # Flagging
     path('<int:attempt_id>/flag/', views.FlagExamView.as_view(), name='flag-exam'),
     path('<int:attempt_id>/unflag/', views.UnflagExamView.as_view(), name='unflag-exam'),

@@ -25,6 +25,7 @@ urlpatterns = [
     
     # ============ PROOF UPLOAD ============
     path('proofs/upload/', views.PaymentProofUploadView.as_view(), name='upload-proof'),
+    path('eligibility/', views.PaymentEligibilityView.as_view(), name='payment-eligibility'),
     path('proofs/', views.PaymentProofListView.as_view(), name='proofs-list'),
     path('proofs/<int:pk>/verify/', views.PaymentProofVerifyView.as_view(), name='verify-proof'),
     

@@ -6,9 +6,11 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.db.models import Q
 from django.utils import timezone
+from django.conf import settings
 from .models import (
     COURSE_ACCESS_ENROLLMENT_STATUSES,
     Course,
+    CourseAIConversation,
     CourseMaterial,
     Enrollment,
     Assignment,
@@ -24,6 +26,10 @@ import os
 from rest_framework.views import APIView
 import magic
 from django.core.files.storage import default_storage
+import logging
+import requests
+
+logger = logging.getLogger(__name__)
 
 class CourseListView(generics.ListCreateAPIView):
     serializer_class = CourseSerializer
@@ -1101,22 +1107,85 @@ class TeacherCourseGradesView(APIView):
         enrollments = Enrollment.objects.filter(
             course=course
         ).select_related('student__user')
-        
-        results = []
+
+        from exams.models import ExamAttempt
+        from decimal import Decimal
+
+        grade_breakdowns = {}
         for enrollment in enrollments:
-            enrollment.update_course_grade()
-            
+            grade_breakdowns[enrollment.student_id] = {
+                category: {'obtained': Decimal('0'), 'possible': Decimal('0')}
+                for category in ('quiz', 'mid', 'assignment', 'final')
+            }
+
+        exam_attempts = ExamAttempt.objects.filter(
+            exam__course=course,
+            status__in=('SUBMITTED', 'GRADED'),
+            score__isnull=False,
+        ).select_related('exam')
+        for attempt in exam_attempts:
+            category = {
+                'QUIZ': 'quiz',
+                'MID': 'mid',
+                'MIDTERM': 'mid',
+                'FINAL': 'final',
+            }.get(attempt.exam.exam_type)
+            breakdown = grade_breakdowns.get(attempt.student_id)
+            if category and breakdown is not None:
+                breakdown[category]['obtained'] += Decimal(str(attempt.score))
+                breakdown[category]['possible'] += Decimal(str(attempt.total_marks or attempt.exam.total_marks or 0))
+
+        assignment_submissions = AssignmentSubmission.objects.filter(
+            assignment__course=course,
+            marks_obtained__isnull=False,
+        ).select_related('assignment')
+        for submission in assignment_submissions:
+            breakdown = grade_breakdowns.get(submission.student_id)
+            if breakdown is not None:
+                breakdown['assignment']['obtained'] += Decimal(str(submission.marks_obtained))
+                breakdown['assignment']['possible'] += Decimal(str(submission.assignment.total_marks or 0))
+
+        results = []
+        from utils.grading import calculate_grade
+
+        for enrollment in enrollments:
+            total_obtained = sum(
+                (category['obtained'] for category in grade_breakdowns[enrollment.student_id].values()),
+                Decimal('0'),
+            )
+            total_possible = sum(
+                (category['possible'] for category in grade_breakdowns[enrollment.student_id].values()),
+                Decimal('0'),
+            )
+            grade_breakdown = {
+                category: {
+                    'obtained': float(values['obtained']),
+                    'possible': float(values['possible']),
+                }
+                for category, values in grade_breakdowns[enrollment.student_id].items()
+            }
+            percentage = (
+                total_obtained / total_possible * Decimal('100')
+                if total_possible
+                else None
+            )
+            grade_info = calculate_grade(percentage) if percentage is not None else {
+                'letter': 'NON',
+                'gpa': 0.0,
+            }
+
             results.append({
                 'student_id': enrollment.student.id,
                 'student_name': enrollment.student.user.full_name,
                 'student_email': enrollment.student.user.email,
                 'student_number': enrollment.student.student_id,
-                'total_marks_obtained': float(enrollment.total_marks_obtained) if enrollment.total_marks_obtained else 0,
-                'total_marks_possible': float(enrollment.total_marks_possible) if enrollment.total_marks_possible else 0,
-                'percentage': float(enrollment.percentage_score) if enrollment.percentage_score else 0,
-                'grade_letter': enrollment.grade_letter or 'NON',
-                'grade_points': float(enrollment.grade_points) if enrollment.grade_points else 0,
+                'total_marks_obtained': float(total_obtained),
+                'total_marks_possible': float(total_possible),
+                'percentage': round(float(percentage), 2) if percentage is not None else 0,
+                'grade_letter': grade_info['letter'],
+                'grade_points': float(grade_info['gpa']),
                 'status': enrollment.status,
+                'assessment_grades': grade_breakdown,
             })
         
         # Calculate class statistics
@@ -1141,3 +1210,280 @@ class TeacherCourseGradesView(APIView):
             'grade_distribution': grade_distribution,
             'students': results
         })       
+
+
+class CourseAIChatView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_accessible_course(self, request, course_id):
+        user = request.user
+        if user.role not in ('STUDENT', 'TEACHER'):
+            return None, Response(
+                {'error': 'Only students and teachers can use course AI'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        course = Course.objects.filter(id=course_id).first()
+        if not course:
+            return None, Response(
+                {'error': 'Course not found'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if user.role == 'TEACHER':
+            if course.instructor_id != user.id:
+                return None, Response(
+                    {'error': 'You are not the instructor for this course'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+        else:
+            student = StudentProfile.objects.filter(user=user).first()
+            enrolled = student and Enrollment.objects.filter(
+                student=student,
+                course=course,
+                status__in=COURSE_ACCESS_ENROLLMENT_STATUSES,
+            ).exists()
+            approved_course = (
+                student
+                and course.is_approved
+                and course.department_id
+                and course.department.name == student.department
+            )
+            if not enrolled and not approved_course:
+                return None, Response(
+                    {'error': 'You do not have access to this course'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+        return course, None
+
+    def get(self, request, course_id):
+        course, error_response = self.get_accessible_course(request, course_id)
+        if error_response:
+            return error_response
+
+        conversation_id = request.query_params.get('conversation_id')
+        conversations = CourseAIConversation.objects.filter(
+            user=request.user,
+            course=course,
+        )
+        if conversation_id:
+            if not conversation_id.isdecimal():
+                return Response(
+                    {'error': 'Chat conversation not found'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            conversation = conversations.filter(id=conversation_id).first()
+            if not conversation:
+                return Response(
+                    {'error': 'Chat conversation not found'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            return Response({
+                'id': conversation.id,
+                'title': conversation.title,
+                'messages': conversation.messages,
+                'updated_at': conversation.updated_at,
+            })
+
+        return Response([
+            {
+                'id': conversation.id,
+                'title': conversation.title,
+                'updated_at': conversation.updated_at,
+            }
+            for conversation in conversations[:50]
+        ])
+
+    def post(self, request, course_id):
+        user = request.user
+        course, error_response = self.get_accessible_course(request, course_id)
+        if error_response:
+            return error_response
+
+        conversation = None
+        conversation_id = request.data.get('conversation_id')
+        if conversation_id is not None:
+            if (
+                isinstance(conversation_id, bool)
+                or not str(conversation_id).isdecimal()
+            ):
+                return Response(
+                    {'error': 'Chat conversation not found'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            conversation = CourseAIConversation.objects.filter(
+                id=conversation_id,
+                user=user,
+                course=course,
+            ).first()
+            if not conversation:
+                return Response(
+                    {'error': 'Chat conversation not found'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+        text = request.data.get('message')
+        is_legacy_request = text is None
+        if text is not None:
+            if not isinstance(text, str) or not text.strip() or len(text) > 4000:
+                return Response(
+                    {'error': 'Message text must contain 1 to 4000 characters'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            stored_messages = conversation.messages if conversation else []
+            messages = [
+                {
+                    'role': 'user' if message.get('role') == 'user' else 'model',
+                    'content': message['content'],
+                }
+                for message in stored_messages
+            ]
+            messages.append({'role': 'user', 'content': text.strip()})
+        else:
+            messages = request.data.get('messages')
+        if (
+            not isinstance(messages, list)
+            or not messages
+            or (is_legacy_request and len(messages) > 20)
+        ):
+            return Response({'error': 'Provide up to 20 messages ending with a user message'}, status=status.HTTP_400_BAD_REQUEST)
+
+        for message in messages:
+            if not isinstance(message, dict) or message.get('role') not in ('user', 'model'):
+                return Response({'error': 'Each message must have a valid role and text'}, status=status.HTTP_400_BAD_REQUEST)
+            text = message.get('content')
+            if not isinstance(text, str) or not text.strip() or len(text) > 4000:
+                return Response({'error': 'Message text must contain 1 to 4000 characters'}, status=status.HTTP_400_BAD_REQUEST)
+        if messages[-1]['role'] != 'user':
+            return Response({'error': 'The latest message must be from the user'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not settings.GEMINI_API_KEY:
+            return Response({'error': 'ODEMS AI is not configured. Set GEMINI_API_KEY on the backend.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        endpoint = (
+            'https://generativelanguage.googleapis.com/v1beta/models/'
+            f'{settings.GEMINI_MODEL}:generateContent'
+        )
+        prompt_messages = messages[-10:]
+        contents = [
+            {
+                'role': message['role'],
+                'parts': [{'text': message['content'].strip()}],
+            }
+            for message in prompt_messages
+        ]
+        try:
+            response = requests.post(
+                endpoint,
+                headers={'x-goog-api-key': settings.GEMINI_API_KEY},
+                json={
+                    'systemInstruction': {
+                        'parts': [{
+                            'text': (
+                                'You are ODEMS AI, a helpful educational assistant. '
+                                'Welcome the learner warmly, explain concepts clearly, '
+                                'and keep answers relevant to the course. Do not claim '
+                                'to be a human instructor. '
+                                f"Course: {course.course_code} — {course.title}. "
+                                f"Course description: {course.description or 'Not provided'}"
+                            ),
+                        }],
+                    },
+                    'contents': contents,
+                    'generationConfig': {'maxOutputTokens': 512, 'temperature': 0.4},
+                },
+                timeout=(5, 25),
+            )
+            response.raise_for_status()
+            data = response.json()
+        except requests.Timeout:
+            logger.warning('Gemini course chat timed out for course %s', course_id)
+            return Response({'error': 'ODEMS AI took too long to respond. Please try again.'}, status=status.HTTP_504_GATEWAY_TIMEOUT)
+        except requests.HTTPError as error:
+            upstream_status = error.response.status_code if error.response is not None else None
+            provider_message = ''
+            if error.response is not None:
+                try:
+                    provider_error = error.response.json().get('error', {})
+                    if isinstance(provider_error, dict):
+                        provider_message = provider_error.get('message', '')
+                except (ValueError, AttributeError):
+                    pass
+            if not isinstance(provider_message, str):
+                provider_message = ''
+            if settings.GEMINI_API_KEY:
+                provider_message = provider_message.replace(settings.GEMINI_API_KEY, '[redacted]')
+            logger.warning(
+                'Gemini course chat returned HTTP %s for course %s: %s',
+                upstream_status or 'unknown',
+                course_id,
+                provider_message or 'no provider message',
+            )
+            if upstream_status in (401, 403):
+                return Response(
+                    {'error': 'Gemini denied access. Check that GEMINI_API_KEY is valid and has access to the Generative Language API.'},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            if upstream_status == 429:
+                return Response(
+                    {'error': 'ODEMS AI has reached its Gemini usage limit. Try again later or check the API quota.'},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            if upstream_status in (400, 404):
+                if provider_message:
+                    return Response(
+                        {'error': f'Gemini rejected the request: {provider_message}'},
+                        status=status.HTTP_502_BAD_GATEWAY,
+                    )
+                return Response(
+                    {'error': 'Gemini rejected the request. Check the API key, model, and request configuration.'},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+            return Response(
+                {'error': 'ODEMS AI is temporarily unavailable. Please try again.'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        except requests.RequestException:
+            logger.exception('Gemini course chat request failed for course %s', course_id)
+            return Response({'error': 'ODEMS AI is temporarily unavailable. Please try again.'}, status=status.HTTP_502_BAD_GATEWAY)
+        except ValueError:
+            logger.exception('Gemini returned invalid JSON for course %s', course_id)
+            return Response({'error': 'ODEMS AI returned an invalid response. Please try again.'}, status=status.HTTP_502_BAD_GATEWAY)
+
+        try:
+            answer = data['candidates'][0]['content']['parts'][0]['text'].strip()
+        except (KeyError, IndexError, TypeError):
+            logger.error('Gemini response did not contain text for course %s', course_id)
+            return Response({'error': 'ODEMS AI did not return a text answer. Please try again.'}, status=status.HTTP_502_BAD_GATEWAY)
+        if not answer:
+            return Response({'error': 'ODEMS AI returned an empty answer. Please try again.'}, status=status.HTTP_502_BAD_GATEWAY)
+
+        conversation_messages = [
+            {
+                'role': 'user' if message['role'] == 'user' else 'assistant',
+                'content': message['content'].strip(),
+            }
+            for message in messages
+        ]
+        conversation_messages.append({'role': 'assistant', 'content': answer})
+        first_question = next(
+            message['content']
+            for message in conversation_messages
+            if message['role'] == 'user'
+        )
+        if conversation is None:
+            conversation = CourseAIConversation(
+                user=user,
+                course=course,
+                title=first_question[:200],
+            )
+        conversation.messages = conversation_messages[-100:]
+        conversation.save()
+        return Response({
+            'answer': answer,
+            'conversation': {
+                'id': conversation.id,
+                'title': conversation.title,
+                'updated_at': conversation.updated_at,
+            },
+        })

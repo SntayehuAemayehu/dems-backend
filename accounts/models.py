@@ -99,6 +99,18 @@ class StudentProfile(models.Model):
     transcript = models.FileField(upload_to='student_documents/transcripts/', null=True, blank=True)
     other_documents = models.FileField(upload_to='student_documents/other/', null=True, blank=True)
     documents_submitted = models.BooleanField(default=False)
+    DOCUMENTS_STATUS_CHOICES = [
+        ('NOT_SUBMITTED', 'Not Submitted'),
+        ('PENDING', 'Pending Review'),
+        ('APPROVED', 'Approved'),
+        ('REJECTED', 'Rejected'),
+    ]
+    documents_status = models.CharField(
+        max_length=20,
+        choices=DOCUMENTS_STATUS_CHOICES,
+        default='NOT_SUBMITTED',
+    )
+    documents_rejection_reason = models.TextField(blank=True, default='')
     documents_verified_at = models.DateTimeField(null=True, blank=True)
     registration_complete = models.BooleanField(default=False)
     

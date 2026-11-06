@@ -414,6 +414,62 @@ class ReviewProctoringView(APIView):
         return Response(result)
 
 
+class ReviewStudentsView(APIView):
+    """Provide an admin drilldown from departments to students and captured images."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        if request.user.role != 'ADMIN':
+            return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+
+        from .models import ProctorImage
+
+        department = request.query_params.get('department')
+        student_id = request.query_params.get('student_id')
+
+        if not department:
+            departments = (
+                StudentProfile.objects.exclude(department='')
+                .exclude(department__isnull=True)
+                .values_list('department', flat=True)
+                .distinct()
+                .order_by('department')
+            )
+            return Response([{'name': name} for name in departments])
+
+        students = StudentProfile.objects.select_related('user').filter(department=department)
+        if not student_id:
+            return Response([
+                {
+                    'id': student.id,
+                    'student_id': student.student_id,
+                    'full_name': student.user.full_name,
+                    'email': student.user.email,
+                }
+                for student in students.order_by('user__full_name')
+            ])
+
+        student = students.filter(id=student_id).first()
+        if not student:
+            return Response({'error': 'Student not found in this department'}, status=status.HTTP_404_NOT_FOUND)
+
+        images = ProctorImage.objects.filter(
+            attempt__student=student
+        ).select_related('attempt', 'attempt__exam').order_by('-capture_time')
+        return Response([
+            {
+                'id': image.id,
+                'attempt_id': image.attempt_id,
+                'exam_title': image.attempt.exam.title if image.attempt.exam else 'Unknown exam',
+                'image': image.image.url if image.image else None,
+                'capture_time': image.capture_time.isoformat() if image.capture_time else None,
+                'is_suspicious': image.is_suspicious,
+                'suspicious_reason': image.suspicious_reason,
+            }
+            for image in images
+        ])
+
+
 class ReviewProctoringDetailView(APIView):
     """Get detailed proctoring session with all images and logs"""
     permission_classes = [permissions.IsAuthenticated]

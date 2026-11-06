@@ -129,6 +129,17 @@ class ExamAttempt(models.Model):
         return f"{self.student.user.full_name} - {self.exam.title}"
 
 
+class ExaminerAssignment(models.Model):
+    exam = models.ForeignKey(Exam, on_delete=models.CASCADE, related_name='examiner_assignments')
+    attempt = models.OneToOneField(ExamAttempt, on_delete=models.CASCADE, related_name='examiner_assignment')
+    examiner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='examiner_assignments')
+    assigned_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='created_examiner_assignments')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.exam_id}: {self.examiner_id} -> {self.attempt_id}"
+
+
 class Answer(models.Model):
     attempt = models.ForeignKey(ExamAttempt, on_delete=models.CASCADE, related_name='answer_set')
     question = models.ForeignKey(Question, on_delete=models.CASCADE)

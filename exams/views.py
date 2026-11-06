@@ -1,15 +1,15 @@
 # exams/views.py - COMPLETE WITH ALL VIEWS
 from decimal import Decimal
 from django.core.exceptions import ObjectDoesNotExist
-from django.db.models import Count
+from django.db.models import Count, Q
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.utils import timezone
 from django.db import transaction
-from .models import Exam, Question, ExamAttempt, Answer, ExamRecording
+from .models import Exam, Question, ExamAttempt, Answer, ExamRecording, ExaminerAssignment
 from .serializers import ExamSerializer, QuestionSerializer, ExamAttemptSerializer
-from accounts.models import StudentProfile
+from accounts.models import StudentProfile, TeacherProfile
 from notifications.utils import send_notification
 from courses.models import COURSE_ACCESS_ENROLLMENT_STATUSES, Course, Enrollment
 from proctoring.models import ProctorSession, ProctorImage
@@ -20,6 +20,23 @@ import os
 from .ai_proctor import AIProctorBackend
 from django.core.files.base import ContentFile
 logger = logging.getLogger(__name__)
+
+
+def _can_manage_exam(exam, user):
+    return user.role == 'ADMIN' or exam.course.instructor_id == user.id or exam.created_by_id == user.id
+
+
+def _broadcast_exam_questions(exam):
+    from asgiref.sync import async_to_sync
+    from channels.layers import get_channel_layer
+
+    async_to_sync(get_channel_layer().group_send)(
+        f'exam_proctor_{exam.id}',
+        {
+            'type': 'exam_update',
+            'questions': QuestionSerializer(exam.questions.order_by('order'), many=True).data,
+        },
+    )
 
 
 # ============================================================
@@ -42,7 +59,10 @@ class ExamListView(generics.ListCreateAPIView):
         user = self.request.user
         
         if user.role == 'TEACHER':
-            return Exam.objects.filter(course__instructor=user)
+            return Exam.objects.filter(
+                Q(course__instructor=user) |
+                Q(examiner_assignments__examiner=user, examiner_assignments__attempt__status='IN_PROGRESS')
+            ).distinct()
         
         elif user.role == 'STUDENT':
             try:
@@ -124,6 +144,15 @@ class ExamDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Exam.objects.all()
     serializer_class = ExamSerializer
     permission_classes = [permissions.IsAuthenticated]
+
+    def update(self, request, *args, **kwargs):
+        exam = self.get_object()
+        if not _can_manage_exam(exam, request.user):
+            return Response({'error': 'You do not have permission to update this exam'}, status=status.HTTP_403_FORBIDDEN)
+        response = super().update(request, *args, **kwargs)
+        if response.status_code < 400:
+            _broadcast_exam_questions(exam)
+        return response
     
     def destroy(self, request, *args, **kwargs):
         exam = self.get_object()
@@ -215,6 +244,7 @@ class QuestionView(generics.ListCreateAPIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
         self.perform_create(serializer)
+        _broadcast_exam_questions(exam)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 # exams/views.py
@@ -229,7 +259,7 @@ class QuestionDetailView(generics.RetrieveUpdateDestroyAPIView):
         question = self.get_object()
         
         # Permission check
-        if request.user.role != 'ADMIN' and question.exam.created_by != request.user:
+        if not _can_manage_exam(question.exam, request.user):
             return Response(
                 {'error': 'You do not have permission to update this question'},
                 status=status.HTTP_403_FORBIDDEN
@@ -276,7 +306,7 @@ class QuestionDetailView(generics.RetrieveUpdateDestroyAPIView):
         serializer = self.get_serializer(question, data=data, partial=partial)
         serializer.is_valid(raise_exception=True)
         self.perform_update(serializer)
-        
+        _broadcast_exam_questions(question.exam)
         return Response(serializer.data)
 
     # ✅ ALLOW TEACHERS TO DELETE QUESTIONS
@@ -284,12 +314,14 @@ class QuestionDetailView(generics.RetrieveUpdateDestroyAPIView):
         question = self.get_object()
         
         # Permission check
-        if request.user.role != 'ADMIN' and question.exam.created_by != request.user:
+        if not _can_manage_exam(question.exam, request.user):
             return Response(
                 {'error': 'You do not have permission to delete this question'},
                 status=status.HTTP_403_FORBIDDEN
             )
+        exam = question.exam
         question.delete()
+        _broadcast_exam_questions(exam)
         return Response({'message': 'Question deleted successfully'}, status=status.HTTP_200_OK)
 
 
@@ -2258,7 +2290,13 @@ class LiveExamMonitoringView(APIView):
             )
 
         # Check teacher permission
-        if user.role == 'TEACHER' and exam.course.instructor != user:
+        is_owner = user.role == 'TEACHER' and exam.course.instructor == user
+        is_examiner = user.role == 'TEACHER' and ExaminerAssignment.objects.filter(
+            exam=exam,
+            examiner=user,
+            attempt__status='IN_PROGRESS',
+        ).exists()
+        if user.role == 'TEACHER' and not is_owner and not is_examiner:
             return Response(
                 {'error': 'You can only monitor your own courses'},
                 status=status.HTTP_403_FORBIDDEN
@@ -2286,8 +2324,11 @@ class LiveExamMonitoringView(APIView):
             exam=exam,
             status='IN_PROGRESS'
         ).select_related(
-            'student__user'
+            'student__user',
+            'examiner_assignment__examiner',
         ).order_by('-start_time')
+        if user.role == 'TEACHER' and not is_owner:
+            attempts = attempts.filter(examiner_assignment__examiner=user)
 
         result = []
 
@@ -2331,6 +2372,16 @@ class LiveExamMonitoringView(APIView):
                 ),
                 'latest_image': latest_image,
                 'status': attempt.status,
+                'assigned_examiner_id': (
+                    attempt.examiner_assignment.examiner_id
+                    if hasattr(attempt, 'examiner_assignment')
+                    else None
+                ),
+                'assigned_examiner_name': (
+                    attempt.examiner_assignment.examiner.full_name
+                    if hasattr(attempt, 'examiner_assignment')
+                    else None
+                ),
             })
 
         return Response({
@@ -2339,6 +2390,98 @@ class LiveExamMonitoringView(APIView):
             'total_active': len(result),
             'students': result
         })
+
+
+class ExaminerAssignmentView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, exam_id):
+        try:
+            exam = Exam.objects.select_related('course__department').get(id=exam_id)
+        except Exam.DoesNotExist:
+            return Response({'error': 'Exam not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if request.user.role != 'TEACHER':
+            return Response({'error': 'Only the course instructor can assign examiners'}, status=status.HTTP_403_FORBIDDEN)
+        is_owner = exam.course.instructor_id == request.user.id
+        is_assigned = ExaminerAssignment.objects.filter(
+            exam=exam,
+            examiner=request.user,
+            attempt__status='IN_PROGRESS',
+        ).exists()
+        if not is_owner and not is_assigned:
+            return Response({'error': 'You are not assigned to this exam'}, status=status.HTTP_403_FORBIDDEN)
+
+        options = []
+        if is_owner and exam.course.department:
+            options = list(
+                TeacherProfile.objects.filter(
+                    department=exam.course.department.name,
+                    user__role='TEACHER',
+                    user__is_active=True,
+                ).exclude(user=exam.course.instructor).values(
+                    'user_id', 'user__full_name',
+                ).order_by('user__full_name')
+            )
+        return Response({
+            'can_assign': is_owner,
+            'examiners': [{'id': row['user_id'], 'full_name': row['user__full_name']} for row in options],
+        })
+
+    def post(self, request, exam_id):
+        try:
+            exam = Exam.objects.select_related('course__department').get(id=exam_id)
+        except Exam.DoesNotExist:
+            return Response({'error': 'Exam not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if request.user.role != 'TEACHER' or exam.course.instructor_id != request.user.id:
+            return Response({'error': 'Only the course instructor can assign examiners'}, status=status.HTTP_403_FORBIDDEN)
+
+        attempt_ids = request.data.get('attempt_ids')
+        examiner_id = request.data.get('examiner_id')
+        if not isinstance(attempt_ids, list) or not attempt_ids or not examiner_id:
+            return Response({'error': 'Select an examiner and at least one active student'}, status=status.HTTP_400_BAD_REQUEST)
+        if any(not isinstance(attempt_id, int) or isinstance(attempt_id, bool) for attempt_id in attempt_ids):
+            return Response({'error': 'Student attempt identifiers must be integers'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            examiner_id = int(examiner_id)
+        except (TypeError, ValueError):
+            return Response({'error': 'Select a valid department examiner'}, status=status.HTTP_400_BAD_REQUEST)
+        if examiner_id < 1:
+            return Response({'error': 'Select a valid department examiner'}, status=status.HTTP_400_BAD_REQUEST)
+        if not exam.course.department:
+            return Response({'error': 'The course must have a department before examiners can be assigned'}, status=status.HTTP_400_BAD_REQUEST)
+
+        examiner = TeacherProfile.objects.filter(
+            user_id=examiner_id,
+            user__role='TEACHER',
+            user__is_active=True,
+            department=exam.course.department.name,
+        ).select_related('user').first()
+        if not examiner:
+            return Response({'error': 'The selected examiner is not an active teacher in this department'}, status=status.HTTP_400_BAD_REQUEST)
+
+        attempts = ExamAttempt.objects.filter(
+            id__in=attempt_ids,
+            exam=exam,
+            status='IN_PROGRESS',
+        )
+        if attempts.count() != len(set(attempt_ids)):
+            return Response({'error': 'One or more selected students are no longer taking this exam'}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            ExaminerAssignment.objects.filter(attempt__in=attempts).delete()
+            ExaminerAssignment.objects.bulk_create([
+                ExaminerAssignment(
+                    exam=exam,
+                    attempt=attempt,
+                    examiner=examiner.user,
+                    assigned_by=request.user,
+                )
+                for attempt in attempts
+            ])
+
+        return Response({'message': 'Examiner assigned to selected students', 'assigned_count': attempts.count()})
 
 
 class CourseProctoringImagesView(APIView):

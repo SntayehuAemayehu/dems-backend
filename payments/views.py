@@ -8,7 +8,7 @@ from .payment_methods.simulate import SimulateMethod
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from django.db import connection
+from django.db import IntegrityError, connection
 from django.db import transaction
 from django.db.models import Sum, Q
 from django.utils import timezone
@@ -36,6 +36,37 @@ from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 import json
 logger = logging.getLogger(__name__)
+
+
+def payment_submission_block_reason(student):
+    """Return why another proof cannot be submitted, or None when eligible."""
+    if PaymentProof.objects.filter(student=student, status='PENDING').exists():
+        return 'A payment proof is already pending verification.'
+
+    if student.payment_status == 'VERIFIED' or PaymentProof.objects.filter(
+        student=student,
+        status='VERIFIED',
+    ).exists():
+        return 'Your payment has been verified. New payment submission is unavailable.'
+
+    return None
+
+
+class PaymentEligibilityView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        try:
+            student = StudentProfile.objects.get(user=request.user)
+        except StudentProfile.DoesNotExist:
+            return Response(
+                {'can_submit': False, 'reason': 'Student profile not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        reason = payment_submission_block_reason(student)
+        return Response({'can_submit': reason is None, 'reason': reason or ''})
+
 
 # payments/views.py - COMPLETE WITH ALL METHODS
 # payments/views.py - ADD WEBHOOK HANDLERS
@@ -510,11 +541,16 @@ class PaymentProofUploadView(APIView):
             try:
                 student = StudentProfile.objects.get(user=request.user)
             except StudentProfile.DoesNotExist:
-                student = StudentProfile.objects.create(
-                    user=request.user,
-                    payment_status='PENDING'
+                return Response(
+                    {'error': 'Student profile not found'},
+                    status=status.HTTP_404_NOT_FOUND,
                 )
-                logger.info(f"Created StudentProfile for user: {request.user.email}")
+
+            if request.user.role != 'STUDENT':
+                return Response(
+                    {'error': 'Only students can submit payment proofs'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
             
             if 'receipt_image' not in request.FILES:
                 return Response(
@@ -559,19 +595,54 @@ class PaymentProofUploadView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            payment_proof = PaymentProof(
-                student=student,
-                transaction_id=transaction_id,
-                amount=amount_decimal,
-                bank_name=bank_name,
-                transaction_date=transaction_date,
-                payment_type=payment_type,
-                semester=semester,
-                academic_year=academic_year,
-                receipt_image=receipt_file
-            )
-            
-            payment_proof.save()
+            with transaction.atomic():
+                student = StudentProfile.objects.select_for_update().get(pk=student.pk)
+                block_reason = payment_submission_block_reason(student)
+                if block_reason:
+                    return Response(
+                        {'error': block_reason},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                existing_proof = PaymentProof.objects.select_for_update().filter(
+                    transaction_id=transaction_id,
+                ).first()
+                if existing_proof and (
+                    existing_proof.student_id != student.id
+                    or existing_proof.status not in ['REJECTED', 'NEED_RESUBMISSION']
+                ):
+                    return Response(
+                        {'error': 'A payment proof with this transaction ID already exists'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                if existing_proof:
+                    existing_proof.amount = amount_decimal
+                    existing_proof.bank_name = bank_name
+                    existing_proof.transaction_date = transaction_date
+                    existing_proof.payment_type = payment_type
+                    existing_proof.semester = semester
+                    existing_proof.academic_year = academic_year
+                    existing_proof.receipt_image = receipt_file
+                    existing_proof.status = 'PENDING'
+                    existing_proof.rejection_reason = ''
+                    existing_proof.verified_by = None
+                    existing_proof.verified_at = None
+                    existing_proof.uploaded_at = timezone.now()
+                    existing_proof.save()
+                    payment_proof = existing_proof
+                else:
+                    payment_proof = PaymentProof.objects.create(
+                        student=student,
+                        transaction_id=transaction_id,
+                        amount=amount_decimal,
+                        bank_name=bank_name,
+                        transaction_date=transaction_date,
+                        payment_type=payment_type,
+                        semester=semester,
+                        academic_year=academic_year,
+                        receipt_image=receipt_file,
+                    )
             
             # Send notifications
             send_notification(
@@ -604,6 +675,11 @@ class PaymentProofUploadView(APIView):
                 'data': serializer.data
             }, status=status.HTTP_201_CREATED)
             
+        except IntegrityError:
+            return Response(
+                {'error': 'A payment proof with this transaction ID already exists'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         except Exception as e:
             logger.error(f"Error in payment upload: {e}")
             return Response(

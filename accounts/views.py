@@ -762,6 +762,10 @@ class RegistrarStudentListView(generics.ListAPIView):
             queryset = queryset.filter(documents_verified=True)
         elif doc_status == 'pending':
             queryset = queryset.filter(documents_submitted=False)
+        elif doc_status in ['review_pending', 'rejected']:
+            queryset = queryset.filter(documents_status=doc_status.upper().replace('REVIEW_', ''))
+        elif doc_status in ['review_pending', 'rejected']:
+            queryset = queryset.filter(documents_status=doc_status.upper().replace('REVIEW_', ''))
         
         enrollment_status = self.request.query_params.get('enrollment_status')
         if enrollment_status == 'activated':
@@ -821,11 +825,22 @@ class RegistrarStudentVerifyView(APIView):
             )
         
         action = request.data.get('action')
-        reason = request.data.get('reason', '')
+        reason = str(request.data.get('reason', '')).strip()
+
+        if action not in ['verify', 'reject']:
+            return Response({'error': 'Invalid action'}, status=status.HTTP_400_BAD_REQUEST)
+        if action == 'reject' and not reason:
+            return Response(
+                {'error': 'A rejection reason is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         if action == 'verify':
             student.documents_verified = True
             student.documents_verified_at = timezone.now()
+            student.documents_submitted = True
+            student.documents_status = 'APPROVED'
+            student.documents_rejection_reason = ''
             student.save()
             student.user.is_active = True
             student.user.save()
@@ -856,6 +871,8 @@ class RegistrarStudentVerifyView(APIView):
             
         elif action == 'reject':
             student.documents_verified = False
+            student.documents_status = 'REJECTED'
+            student.documents_rejection_reason = reason
             student.save()
             
             send_notification(
@@ -863,15 +880,13 @@ class RegistrarStudentVerifyView(APIView):
                 title='❌ Documents Rejected',
                 message=f'Your documents have been rejected. Reason: {reason}. Please check and resubmit.',
                 notification_type='SYSTEM_ALERT',
-                link='/profile'
+                link='/upload-documents'
             )
             
             return Response({
                 'message': 'Student rejected',
                 'reason': reason
             })
-        
-        return Response({'error': 'Invalid action'}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class RegistrarStudentActivateView(APIView):
@@ -1119,6 +1134,8 @@ class RegistrarStudentDocumentsView(APIView):
                 'department': student.department or '',
                 'documents_submitted': bool(student.documents_submitted),
                 'documents_verified': bool(student.documents_verified),
+                'documents_status': student.documents_status,
+                'documents_rejection_reason': student.documents_rejection_reason,
                 'documents_verified_at': (
                     student.documents_verified_at.isoformat()
                     if student.documents_verified_at else None
@@ -1367,6 +1384,12 @@ class StudentDocumentUploadView(APIView):
                 {'error': 'Account already activated. No documents needed.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        if student.documents_status in ['PENDING', 'APPROVED'] or student.documents_verified:
+            return Response(
+                {'error': 'Documents are already pending review or approved'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         allowed_fields = ['grade_8_certificate', 'grade_12_certificate', 'transcript', 'other_documents']
         updated = False
@@ -1380,6 +1403,10 @@ class StudentDocumentUploadView(APIView):
         
         if updated:
             student.documents_submitted = True
+            student.documents_verified = False
+            student.documents_status = 'PENDING'
+            student.documents_rejection_reason = ''
+            student.documents_verified_at = None
             student.save()
             
             send_notification(
@@ -2227,11 +2254,21 @@ class RegistrarStudentVerifyView(APIView):
             )
         
         action = request.data.get('action')
-        reason = request.data.get('reason', '')
+        reason = str(request.data.get('reason', '')).strip()
+        if action not in ['verify', 'reject']:
+            return Response({'error': 'Invalid action'}, status=status.HTTP_400_BAD_REQUEST)
+        if action == 'reject' and not reason:
+            return Response(
+                {'error': 'A rejection reason is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         if action == 'verify':
             student.documents_verified = True
             student.documents_verified_at = timezone.now()
+            student.documents_submitted = True
+            student.documents_status = 'APPROVED'
+            student.documents_rejection_reason = ''
             student.save()
             student.user.is_active = True
             student.user.save()
@@ -2262,6 +2299,8 @@ class RegistrarStudentVerifyView(APIView):
             
         elif action == 'reject':
             student.documents_verified = False
+            student.documents_status = 'REJECTED'
+            student.documents_rejection_reason = reason
             student.save()
             
             send_notification(
@@ -2269,7 +2308,7 @@ class RegistrarStudentVerifyView(APIView):
                 title='❌ Documents Rejected',
                 message=f'Your documents have been rejected. Reason: {reason}. Please check and resubmit.',
                 notification_type='SYSTEM_ALERT',
-                link='/profile'
+                link='/upload-documents'
             )
             
             return Response({
@@ -2628,6 +2667,12 @@ class StudentDocumentUploadView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        if student.documents_status in ['PENDING', 'APPROVED'] or student.documents_verified:
+            return Response(
+                {'error': 'Documents are already pending review or approved'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         allowed_fields = ['grade_8_certificate', 'grade_12_certificate', 'transcript', 'other_documents']
         updated = False
         uploaded_files = []
@@ -2640,6 +2685,10 @@ class StudentDocumentUploadView(APIView):
         
         if updated:
             student.documents_submitted = True
+            student.documents_verified = False
+            student.documents_status = 'PENDING'
+            student.documents_rejection_reason = ''
+            student.documents_verified_at = None
             student.save()
             
             send_notification(

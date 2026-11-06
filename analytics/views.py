@@ -75,9 +75,13 @@ class ClearSystemLogsView(APIView):
             from analytics.models import SystemLog
             count = SystemLog.objects.count()
             SystemLog.objects.all().delete()
-            
-            # Log this action
-            logger.info(f"System logs cleared by {request.user.email} ({count} records deleted)")
+            SystemLog.objects.create(
+                user=request.user,
+                action='SYSTEM_LOGS_CLEARED',
+                details={'deleted_count': count},
+                ip_address=request.META.get('REMOTE_ADDR') or None,
+                user_agent=request.META.get('HTTP_USER_AGENT', ''),
+            )
             
             return Response({
                 'message': f'Successfully cleared {count} log records',
@@ -305,12 +309,16 @@ class AdminUsersView(APIView):
         for user in users:
             department = ''
             student_id = ''
+            year = None
+            semester = None
 
             if user.role == 'STUDENT':
                 try:
                     sp = user.student_profile
                     department = sp.department or ''
                     student_id = sp.student_id or ''
+                    year = sp.year
+                    semester = sp.current_semester
                 except StudentProfile.DoesNotExist:
                     pass
                 except Exception:
@@ -335,6 +343,8 @@ class AdminUsersView(APIView):
                 'profile_picture': user.profile_picture.url if user.profile_picture else None,
                 'department': department,
                 'student_id': student_id,
+                'year': year,
+                'semester': semester,
             })
 
         return Response(data)
@@ -352,6 +362,8 @@ class AdminUsersView(APIView):
 
             department_value = request.data.get('department', '')
             headed_department_value = request.data.get('headed_department', '')
+            student_year = request.data.get('year', 1)
+            student_semester = request.data.get('semester', 1)
 
             # ---------- Validation ----------
             if not email or not full_name or not password:
@@ -402,6 +414,8 @@ class AdminUsersView(APIView):
                 StudentProfile.objects.create(
                     user=user,
                     department=department_name,   # ✅ Real name saved
+                    year=student_year,
+                    current_semester=student_semester,
                     payment_status='PENDING',
                     registration_type='FRESH'
                 )
@@ -457,6 +471,19 @@ class AdminUsersView(APIView):
                     employee_id=f"ADM{user.id:06d}"
                 )
 
+            SystemLog.objects.create(
+                user=request.user,
+                action='USER_CREATED',
+                details={
+                    'target_user_id': user.id,
+                    'target_user_email': user.email,
+                    'target_role': user.role,
+                    'department': department_name or headed_department_name,
+                },
+                ip_address=self._request_ip(request),
+                user_agent=request.META.get('HTTP_USER_AGENT', ''),
+            )
+
             return Response({
                 'message': 'User created successfully',
                 'user': {
@@ -471,6 +498,10 @@ class AdminUsersView(APIView):
         except Exception as e:
             logger.error(f"Error creating user: {e}")
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @staticmethod
+    def _request_ip(request):
+        return request.META.get('REMOTE_ADDR') or None
 
     # ============================================================
     # PUT — Update a user
@@ -558,8 +589,14 @@ class AdminLogsView(APIView):
                 details={'message': 'First system log'}
             )
         
-        limit = int(request.query_params.get('limit', 50))
-        logs = SystemLog.objects.all().order_by('-created_at')[:limit]
+        limit = max(1, min(int(request.query_params.get('limit', 50)), 500))
+        logs = SystemLog.objects.select_related('user').all()
+        role = request.query_params.get('role', '').upper()
+        if role == 'SYSTEM':
+            logs = logs.filter(user__isnull=True)
+        elif role and role != 'ALL':
+            logs = logs.filter(user__role=role)
+        logs = logs.order_by('-created_at')[:limit]
         
         data = []
         for log in logs:
@@ -568,6 +605,7 @@ class AdminLogsView(APIView):
                 'action': log.action,
                 'user': log.user.full_name if log.user else 'System',
                 'user_id': log.user_id,
+                'role': log.user.role if log.user else 'SYSTEM',
                 'details': log.details,
                 'ip_address': log.ip_address,
                 'log_level': log.log_level,
@@ -591,6 +629,7 @@ class AdminCourseManagementView(APIView):
                 'title': course.title,
                 'description': course.description,
                 'credit_hours': course.credit_hours,
+                'year': course.year,
                 'semester': course.semester,
                 'capacity': course.capacity,
                 'instructor_name': course.instructor.full_name if course.instructor else None,
@@ -608,6 +647,14 @@ class AdminCourseManagementView(APIView):
             course.title = request.data.get('title', course.title)
             course.description = request.data.get('description', course.description)
             course.credit_hours = request.data.get('credit_hours', course.credit_hours)
+            if 'year' in request.data:
+                try:
+                    year = int(request.data['year'])
+                except (TypeError, ValueError):
+                    return Response({'error': 'Year must be an integer from 1 to 5'}, status=status.HTTP_400_BAD_REQUEST)
+                if year < 1 or year > 5:
+                    return Response({'error': 'Year must be between 1 and 5'}, status=status.HTTP_400_BAD_REQUEST)
+                course.year = year
             course.capacity = request.data.get('capacity', course.capacity)
             course.is_active = request.data.get('is_active', course.is_active)
             course.is_approved = request.data.get('is_approved', course.is_approved)
@@ -2422,11 +2469,28 @@ class AdminUserDetailView(APIView):
     def put(self, request, user_id):
         try:
             user = User.objects.get(id=user_id)
+            previous = {'full_name': user.full_name, 'role': user.role, 'is_active': user.is_active}
             user.full_name = request.data.get('full_name', user.full_name)
             user.phone = request.data.get('phone', user.phone)
             user.role = request.data.get('role', user.role)
             user.is_active = request.data.get('is_active', user.is_active)
             user.save()
+            SystemLog.objects.create(
+                user=request.user,
+                action='USER_UPDATED',
+                details={
+                    'target_user_id': user.id,
+                    'target_user_email': user.email,
+                    'previous': previous,
+                    'updated': {
+                        'full_name': user.full_name,
+                        'role': user.role,
+                        'is_active': user.is_active,
+                    },
+                },
+                ip_address=request.META.get('REMOTE_ADDR') or None,
+                user_agent=request.META.get('HTTP_USER_AGENT', ''),
+            )
             return Response({'message': 'User updated successfully'})
         except User.DoesNotExist:
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -2434,6 +2498,17 @@ class AdminUserDetailView(APIView):
     def delete(self, request, user_id):
         try:
             user = User.objects.get(id=user_id)
+            SystemLog.objects.create(
+                user=request.user,
+                action='USER_DELETED',
+                details={
+                    'target_user_id': user.id,
+                    'target_user_email': user.email,
+                    'target_role': user.role,
+                },
+                ip_address=request.META.get('REMOTE_ADDR') or None,
+                user_agent=request.META.get('HTTP_USER_AGENT', ''),
+            )
             user.delete()
             return Response({'message': 'User deleted successfully'})
         except User.DoesNotExist:
@@ -2450,6 +2525,17 @@ class AdminUserToggleView(APIView):
             user = User.objects.get(id=user_id)
             user.is_active = not user.is_active
             user.save()
+            SystemLog.objects.create(
+                user=request.user,
+                action='USER_STATUS_CHANGED',
+                details={
+                    'target_user_id': user.id,
+                    'target_user_email': user.email,
+                    'is_active': user.is_active,
+                },
+                ip_address=request.META.get('REMOTE_ADDR') or None,
+                user_agent=request.META.get('HTTP_USER_AGENT', ''),
+            )
             return Response({
                 'message': f'User {"activated" if user.is_active else "deactivated"} successfully',
                 'is_active': user.is_active
@@ -2632,8 +2718,19 @@ class ClearSystemLogsView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsAdminUser]
     
     def post(self, request):
+        deleted_count = SystemLog.objects.count()
         SystemLog.objects.all().delete()
-        return Response({'message': 'Logs cleared successfully'})
+        SystemLog.objects.create(
+            user=request.user,
+            action='SYSTEM_LOGS_CLEARED',
+            details={'deleted_count': deleted_count},
+            ip_address=request.META.get('REMOTE_ADDR') or None,
+            user_agent=request.META.get('HTTP_USER_AGENT', ''),
+        )
+        return Response({
+            'message': 'Logs cleared successfully',
+            'deleted_count': deleted_count,
+        })
 
 
 # ============ CHECK STUDENT ACCESS VIEW ============

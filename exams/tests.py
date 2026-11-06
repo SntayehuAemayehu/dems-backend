@@ -1,10 +1,16 @@
+import json
+from types import SimpleNamespace
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock
+
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from accounts.models import Department, StudentProfile, User
+from accounts.models import Department, StudentProfile, TeacherProfile, User
 from courses.models import Course, Enrollment
-from exams.models import Exam, ExamAttempt, Question
+from exams.models import Exam, ExamAttempt, ExaminerAssignment, Question
+from exams.consumers import ExamProctorConsumer
 from proctoring.models import ProctorImage
 
 
@@ -144,6 +150,38 @@ class StartExamViewTests(TestCase):
         student = response.data['students'][0]
         self.assertEqual(student['user_id'], self.user.id)
 
+    def test_course_instructor_can_update_exam_and_question_during_live_exam(self):
+        teacher = User.objects.create_user(
+            email='teacher@example.com',
+            password='test-password',
+            full_name='Test Teacher',
+            role='TEACHER',
+        )
+        self.course.instructor = teacher
+        self.course.save(update_fields=['instructor'])
+        self.exam.created_by = teacher
+        self.exam.save(update_fields=['created_by'])
+        question = self.exam.questions.first()
+        self.client.force_authenticate(user=teacher)
+
+        exam_response = self.client.patch(
+            f'/api/exams/{self.exam.id}/',
+            {'title': 'Updated live exam'},
+            format='json',
+        )
+        question_response = self.client.patch(
+            f'/api/exams/questions/{question.id}/',
+            {'text': 'Updated live question', 'type': 'SHORT'},
+            format='json',
+        )
+
+        self.assertEqual(exam_response.status_code, 200)
+        self.assertEqual(question_response.status_code, 200)
+        self.exam.refresh_from_db()
+        question.refresh_from_db()
+        self.assertEqual(self.exam.title, 'Updated live exam')
+        self.assertEqual(question.text, 'Updated live question')
+
     def test_teacher_can_filter_proctor_images_by_exam_type(self):
         quiz = Exam.objects.create(
             course=self.course,
@@ -196,6 +234,185 @@ class StartExamViewTests(TestCase):
         self.assertEqual(final_response.status_code, 200)
         self.assertEqual(final_response.data['total_images'], 1)
         self.assertEqual(final_response.data['images'][0]['exam_title'], 'Final')
+
+
+class ExaminerAssignmentViewTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.department = Department.objects.create(name='Mathematics', code='MATH')
+        self.instructor = User.objects.create_user(
+            email='instructor@example.com',
+            password='test-password',
+            full_name='Course Instructor',
+            role='TEACHER',
+        )
+        self.examiner = User.objects.create_user(
+            email='examiner@example.com',
+            password='test-password',
+            full_name='Department Examiner',
+            role='TEACHER',
+        )
+        TeacherProfile.objects.create(user=self.examiner, department=self.department.name)
+        self.other_examiner = User.objects.create_user(
+            email='other@example.com',
+            password='test-password',
+            full_name='Other Department Teacher',
+            role='TEACHER',
+        )
+        TeacherProfile.objects.create(user=self.other_examiner, department='Physics')
+        self.course = Course.objects.create(
+            course_code='MATH101',
+            title='Mathematics',
+            department=self.department,
+            instructor=self.instructor,
+        )
+        self.exam = Exam.objects.create(
+            course=self.course,
+            title='Midterm',
+            created_by=self.instructor,
+            start_time=timezone.now() - timezone.timedelta(minutes=1),
+            end_time=timezone.now() + timezone.timedelta(hours=1),
+        )
+        self.students = []
+        self.attempts = []
+        for index in range(2):
+            user = User.objects.create_user(
+                email=f'student{index}@example.com',
+                password='test-password',
+                full_name=f'Student {index}',
+                role='STUDENT',
+            )
+            profile = StudentProfile.objects.create(user=user, department=self.department.name)
+            self.students.append(user)
+            self.attempts.append(ExamAttempt.objects.create(
+                student=profile,
+                exam=self.exam,
+                status='IN_PROGRESS',
+            ))
+
+    def test_instructor_assigns_only_selected_active_students_to_department_teacher(self):
+        self.client.force_authenticate(user=self.instructor)
+        response = self.client.post(
+            f'/api/exams/{self.exam.id}/examiner-assignments/',
+            {'examiner_id': str(self.examiner.id), 'attempt_ids': [self.attempts[0].id]},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['assigned_count'], 1)
+        self.assertTrue(ExaminerAssignment.objects.filter(
+            exam=self.exam,
+            attempt=self.attempts[0],
+            examiner=self.examiner,
+        ).exists())
+        self.assertFalse(ExaminerAssignment.objects.filter(attempt=self.attempts[1]).exists())
+
+        self.client.force_authenticate(user=self.examiner)
+        monitoring = self.client.get(f'/api/exams/{self.exam.id}/live-monitoring/')
+        self.assertEqual(monitoring.status_code, 200)
+        self.assertEqual([row['attempt_id'] for row in monitoring.data['students']], [self.attempts[0].id])
+        self.assertEqual(
+            monitoring.data['students'][0]['assigned_examiner_name'],
+            self.examiner.full_name,
+        )
+        exam_list = self.client.get('/api/exams/')
+        exam_ids = [row['id'] for row in exam_list.data.get('results', exam_list.data)]
+        self.assertIn(self.exam.id, exam_ids)
+
+        question = Question.objects.create(exam=self.exam, text='Original question')
+        exam_update = self.client.patch(
+            f'/api/exams/{self.exam.id}/',
+            {'title': 'Changed title'},
+            format='json',
+        )
+        question_update = self.client.patch(
+            f'/api/exams/questions/{question.id}/',
+            {'text': 'Changed question'},
+            format='json',
+        )
+        self.assertEqual(exam_update.status_code, 403)
+        self.assertEqual(question_update.status_code, 403)
+
+    def test_instructor_cannot_assign_teacher_from_another_department(self):
+        self.client.force_authenticate(user=self.instructor)
+        response = self.client.post(
+            f'/api/exams/{self.exam.id}/examiner-assignments/',
+            {'examiner_id': self.other_examiner.id, 'attempt_ids': [self.attempts[0].id]},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(ExaminerAssignment.objects.exists())
+
+    def test_unassigned_teacher_cannot_monitor_exam(self):
+        self.client.force_authenticate(user=self.other_examiner)
+
+        response = self.client.get(f'/api/exams/{self.exam.id}/live-monitoring/')
+
+        self.assertEqual(response.status_code, 403)
+
+
+class ExamProctorConsumerJoinTests(IsolatedAsyncioTestCase):
+    async def test_authorized_teacher_join_is_forwarded_to_active_student(self):
+        consumer = ExamProctorConsumer()
+        consumer.user = SimpleNamespace(id=12, role='STUDENT')
+        consumer.send = AsyncMock()
+        consumer.can_signal_to_staff = AsyncMock(return_value=True)
+
+        await consumer.user_join({
+            'user': 'Exam teacher',
+            'role': 'TEACHER',
+            'user_id': 34,
+        })
+
+        consumer.can_signal_to_staff.assert_awaited_once_with(34)
+        payload = json.loads(consumer.send.await_args.kwargs['text_data'])
+        self.assertEqual(payload['type'], 'user_join')
+        self.assertEqual(payload['role'], 'TEACHER')
+        self.assertEqual(payload['user_id'], 34)
+
+    async def test_unassigned_teacher_join_is_not_forwarded_to_student(self):
+        consumer = ExamProctorConsumer()
+        consumer.user = SimpleNamespace(id=12, role='STUDENT')
+        consumer.send = AsyncMock()
+        consumer.can_signal_to_staff = AsyncMock(return_value=False)
+
+        await consumer.user_join({
+            'user': 'Other teacher',
+            'role': 'TEACHER',
+            'user_id': 34,
+        })
+
+        consumer.send.assert_not_awaited()
+
+    async def test_authorized_teacher_can_request_student_stream_refresh(self):
+        consumer = ExamProctorConsumer()
+        consumer.user = SimpleNamespace(id=12, role='STUDENT')
+        consumer.send = AsyncMock()
+        consumer.has_active_attempt = AsyncMock(return_value=True)
+        consumer.can_signal_to_staff = AsyncMock(return_value=True)
+
+        await consumer.request_student_streams({'requester_id': 34})
+
+        consumer.can_signal_to_staff.assert_awaited_once_with(34)
+        payload = json.loads(consumer.send.await_args.kwargs['text_data'])
+        self.assertEqual(payload, {'type': 'stream_request', 'sender_id': 34})
+
+    async def test_stream_refresh_is_not_sent_without_active_attempt(self):
+        consumer = ExamProctorConsumer()
+        consumer.user = SimpleNamespace(id=12, role='STUDENT')
+        consumer.send = AsyncMock()
+        consumer.has_active_attempt = AsyncMock(return_value=False)
+        consumer.can_signal_to_staff = AsyncMock(return_value=True)
+
+        await consumer.request_student_streams({'requester_id': 34})
+
+        consumer.send.assert_not_awaited()
+
+
+class StartExamProctorImageTests(TestCase):
+    def setUp(self):
+        StartExamViewTests.setUp(self)
 
     def test_teacher_can_list_students_and_filter_images_by_student(self):
         quiz = Exam.objects.create(

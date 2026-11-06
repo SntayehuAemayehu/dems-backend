@@ -278,6 +278,9 @@ class ExamProctorConsumer(AsyncWebsocketConsumer):
         if not self.user.is_authenticated:
             await self.close(code=4401)
             return
+        if not await self.can_access_exam():
+            await self.close(code=4403)
+            return
 
         await self.channel_layer.group_add(
             self.room_group_name,
@@ -287,6 +290,14 @@ class ExamProctorConsumer(AsyncWebsocketConsumer):
         await self.accept()
 
         print(f"✅ ExamProctor: {self.user.full_name} ({self.user.role}) joined exam {self.exam_id}")
+
+        if self.user.role == 'STUDENT':
+            questions = await self.get_exam_questions()
+            if questions is not None:
+                await self.send(text_data=json.dumps({
+                    'type': 'exam_update',
+                    'questions': questions,
+                }))
 
         # Notify others
         await self.channel_layer.group_send(
@@ -319,9 +330,20 @@ class ExamProctorConsumer(AsyncWebsocketConsumer):
         try:
             data = json.loads(text_data)
             message_type = data.get('type')
+            target_user_id = data.get('target_user_id')
 
             # ========== WebRTC signaling ==========
-            if message_type in ['offer', 'answer', 'ice_candidate']:
+            if message_type in [
+                'offer', 'answer', 'ice_candidate',
+                'voice_offer', 'voice_answer', 'voice_ice_candidate',
+            ]:
+                if self.user.role == 'STUDENT':
+                    if not await self.has_active_attempt():
+                        return
+                    if target_user_id and not await self.can_signal_to_staff(target_user_id):
+                        return
+                elif not target_user_id or not await self.can_view_student(target_user_id):
+                    return
                 await self.channel_layer.group_send(
                     self.room_group_name,
                     {
@@ -333,10 +355,34 @@ class ExamProctorConsumer(AsyncWebsocketConsumer):
                     }
                 )
 
+            elif message_type == 'request_streams':
+                if self.user.role not in ['TEACHER', 'ADMIN'] or not await self.can_access_exam():
+                    return
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {
+                        'type': 'request_student_streams',
+                        'requester_id': self.user.id,
+                    }
+                )
+
             # ========== Teacher control messages ==========
             elif message_type in ['warning', 'force_submit', 'pause_exam', 'resume_exam', 'add_time', 'chat']:
-                # Only teacher can send these
-                if self.user.role != 'TEACHER':
+                if self.user.role != 'TEACHER' or not target_user_id:
+                    return
+                if not await self.can_view_student(target_user_id):
+                    return
+                if message_type == 'add_time':
+                    if not await self.is_exam_owner():
+                        return
+                    minutes = data.get('minutes')
+                    if not isinstance(minutes, int) or isinstance(minutes, bool) or not 1 <= minutes <= 240:
+                        return
+                    end_time = await self.add_attempt_time(target_user_id, minutes)
+                    if not end_time:
+                        return
+                    data['end_time'] = end_time
+                elif not await self.is_exam_owner() and message_type not in ['warning', 'chat']:
                     return
 
                 await self.channel_layer.group_send(
@@ -359,41 +405,195 @@ class ExamProctorConsumer(AsyncWebsocketConsumer):
     # ========== Handlers ==========
 
     async def webrtc_signal(self, event):
-        # Don't send back to the sender
         if event.get('sender_id') == self.user.id:
             return
+        data = event['data']
+        target_user_id = data.get('target_user_id')
+        if target_user_id:
+            if str(target_user_id) != str(self.user.id):
+                return
+        elif event.get('sender_role') == 'STUDENT':
+            if self.user.role == 'STUDENT' or not await self.can_view_student(event.get('sender_id')):
+                return
+        else:
+            return
         await self.send(text_data=json.dumps({
-            'type': event['data']['type'],
-            'offer': event['data'].get('offer'),
-            'answer': event['data'].get('answer'),
-            'candidate': event['data'].get('candidate'),
+            'type': data['type'],
+            'offer': data.get('offer'),
+            'answer': data.get('answer'),
+            'candidate': data.get('candidate'),
             'sender': event['sender'],
             'sender_role': event['sender_role'],
             'sender_id': event['sender_id'],
+            'target_user_id': target_user_id,
         }))
 
     async def control_message(self, event):
-        # Send control messages to everyone in the room (mainly students)
+        target_user_id = event['data'].get('target_user_id')
+        if str(target_user_id) != str(self.user.id):
+            return
         await self.send(text_data=json.dumps({
             'type': event['message_type'],
             'message': event['data'].get('message'),
-            'minutes': event['data'].get('minutes'),          # for add_time
-            'target_user_id': event['data'].get('target_user_id'),  # optional: send to specific student
+            'minutes': event['data'].get('minutes'),
+            'end_time': event['data'].get('end_time'),
+            'target_user_id': target_user_id,
             'sender': event['sender'],
             'sender_id': event['sender_id'],
         }))
 
+    async def exam_update(self, event):
+        if self.user.role == 'STUDENT':
+            if not await self.has_active_attempt():
+                return
+        elif not await self.can_access_exam():
+            return
+        await self.send(text_data=json.dumps({
+            'type': 'exam_update',
+            'questions': event['questions'],
+        }))
+
+    async def request_student_streams(self, event):
+        if self.user.role != 'STUDENT' or not await self.has_active_attempt():
+            return
+        if not await self.can_signal_to_staff(event.get('requester_id')):
+            return
+        await self.send(text_data=json.dumps({
+            'type': 'stream_request',
+            'sender_id': event['requester_id'],
+        }))
+
     async def user_join(self, event):
+        if event.get('user_id') == self.user.id:
+            return
+        if event.get('role') == 'STUDENT':
+            if self.user.role == 'STUDENT' or not await self.can_view_student(event.get('user_id')):
+                return
+        elif self.user.role == 'STUDENT':
+            if event.get('role') not in ['TEACHER', 'ADMIN'] or not await self.can_signal_to_staff(event.get('user_id')):
+                return
+        else:
+            return
         await self.send(text_data=json.dumps({
             'type': 'user_join',
             'user': event['user'],
             'role': event.get('role'),
             'user_id': event.get('user_id'),
+            'sender_id': event.get('user_id'),
         }))
 
     async def user_leave(self, event):
+        if self.user.role == 'STUDENT' or not await self.can_view_student(event.get('user_id')):
+            return
         await self.send(text_data=json.dumps({
             'type': 'user_leave',
             'user': event['user'],
             'user_id': event.get('user_id'),
         }))
+
+    @database_sync_to_async
+    def can_access_exam(self):
+        from .models import Exam, ExaminerAssignment, ExamAttempt
+
+        exam = Exam.objects.filter(id=self.exam_id).select_related('course__department').first()
+        if not exam:
+            return False
+        if self.user.role == 'ADMIN':
+            return True
+        if self.user.role == 'TEACHER':
+            return exam.course.instructor_id == self.user.id or ExaminerAssignment.objects.filter(
+                exam=exam, examiner=self.user, attempt__status='IN_PROGRESS',
+            ).exists()
+        if self.user.role == 'DEPT_HEAD':
+            return hasattr(self.user, 'headed_department') and exam.course.department_id == self.user.headed_department.id
+        if self.user.role == 'STUDENT':
+            return ExamAttempt.objects.filter(
+                exam=exam, student__user=self.user, status='IN_PROGRESS',
+            ).exists()
+        return False
+
+    @database_sync_to_async
+    def is_exam_owner(self):
+        from .models import Exam
+
+        return self.user.role == 'ADMIN' or Exam.objects.filter(
+            id=self.exam_id, course__instructor=self.user,
+        ).exists()
+
+    @database_sync_to_async
+    def has_active_attempt(self):
+        from .models import ExamAttempt
+
+        return ExamAttempt.objects.filter(
+            exam_id=self.exam_id, student__user=self.user, status='IN_PROGRESS',
+        ).exists()
+
+    @database_sync_to_async
+    def get_exam_questions(self):
+        from .models import Exam, ExamAttempt
+        from .serializers import QuestionSerializer
+
+        exam = Exam.objects.filter(id=self.exam_id).first()
+        if not exam or not ExamAttempt.objects.filter(
+            exam=exam, student__user=self.user, status='IN_PROGRESS',
+        ).exists():
+            return None
+        return QuestionSerializer(exam.questions.order_by('order'), many=True).data
+
+    @database_sync_to_async
+    def can_view_student(self, student_user_id):
+        from .models import Exam, ExaminerAssignment, ExamAttempt
+
+        if not student_user_id:
+            return False
+        if self.user.role == 'STUDENT':
+            return str(self.user.id) == str(student_user_id) and ExamAttempt.objects.filter(
+                exam_id=self.exam_id, student__user=self.user, status='IN_PROGRESS',
+            ).exists()
+        exam = Exam.objects.filter(id=self.exam_id).select_related('course').first()
+        if not exam:
+            return False
+        attempt = ExamAttempt.objects.filter(
+            exam=exam, student__user_id=student_user_id, status='IN_PROGRESS',
+        ).first()
+        if not attempt:
+            return False
+        if self.user.role == 'ADMIN' or exam.course.instructor_id == self.user.id:
+            return True
+        if self.user.role == 'DEPT_HEAD':
+            return hasattr(self.user, 'headed_department') and exam.course.department_id == self.user.headed_department.id
+        return self.user.role == 'TEACHER' and ExaminerAssignment.objects.filter(
+            exam=exam, attempt=attempt, examiner=self.user,
+        ).exists()
+
+    @database_sync_to_async
+    def can_signal_to_staff(self, staff_user_id):
+        from .models import Exam, ExaminerAssignment, ExamAttempt
+
+        exam = Exam.objects.filter(id=self.exam_id).select_related('course').first()
+        attempt = ExamAttempt.objects.filter(
+            exam_id=self.exam_id, student__user=self.user, status='IN_PROGRESS',
+        ).first()
+        if not exam or not attempt:
+            return False
+        if str(exam.course.instructor_id) == str(staff_user_id):
+            return True
+        return ExaminerAssignment.objects.filter(
+            exam=exam, attempt=attempt, examiner_id=staff_user_id,
+        ).exists()
+
+    @database_sync_to_async
+    def add_attempt_time(self, student_user_id, minutes):
+        from django.utils import timezone
+        from .models import ExamAttempt
+
+        attempt = ExamAttempt.objects.filter(
+            exam_id=self.exam_id,
+            student__user_id=student_user_id,
+            status='IN_PROGRESS',
+        ).first()
+        if not attempt:
+            return None
+        attempt.end_time = (attempt.end_time or timezone.now()) + timezone.timedelta(minutes=minutes)
+        attempt.save(update_fields=['end_time'])
+        return attempt.end_time.isoformat()

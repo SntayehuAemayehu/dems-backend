@@ -71,6 +71,7 @@ class CourseSerializer(serializers.ModelSerializer):
             'lab_credit_hours',
             'credit_hours',
 
+            'year',
             'semester',
             'academic_year',
             'capacity',

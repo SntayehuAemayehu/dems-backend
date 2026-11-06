@@ -186,6 +186,7 @@ class StudentProfileSerializer(serializers.ModelSerializer):
             'cgpa', 'total_credits', 'payment_status', 'documents_verified',
             'is_enrolled', 'grade_8_certificate', 'grade_12_certificate',
             'transcript', 'other_documents', 'documents_submitted',
+            'documents_status', 'documents_rejection_reason',
             'documents_verified_at', 'registration_complete', 'registration_type',
             'registration_year', 'registration_semester', 'registration_deadline',
             'activated_at', 'activated_by', 'can_access_services', 
@@ -196,7 +197,12 @@ class StudentProfileSerializer(serializers.ModelSerializer):
         return obj.payment_status == 'VERIFIED' and obj.is_enrolled
     
     def get_can_upload_documents(self, obj):
-        return obj.payment_status == 'VERIFIED' and not obj.is_enrolled
+        return (
+            obj.payment_status == 'VERIFIED'
+            and not obj.is_enrolled
+            and not obj.documents_verified
+            and obj.documents_status not in ['PENDING', 'APPROVED']
+        )
     
     def get_registration_period_open(self, obj):
         from django.utils import timezone
