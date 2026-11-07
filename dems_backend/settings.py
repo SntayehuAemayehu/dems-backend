@@ -317,6 +317,9 @@ def _sqlite_pragmas(sender, connection, **kwargs):
 
 connection_created.connect(_sqlite_pragmas)
 DAPHNE_TIMEOUT = 120
+TEXTBEE_API_KEY = config('TEXTBEE_API_KEY', default='')
+TEXTBEE_DEVICE_ID = config('TEXTBEE_DEVICE_ID', default='')
+
 #for news
 mimetypes.add_type("video/mp4", ".mp4", True)
 mimetypes.add_type("video/webm", ".webm", True)

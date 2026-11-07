@@ -92,10 +92,13 @@ class RegisterSerializer(serializers.ModelSerializer):
         validated_data.pop('confirm_password')
         department_name = validated_data.pop('department', '')
         registration_type = validated_data.pop('registration_type', 'FRESH')
+        phone = validated_data.get('phone', '')
         role = validated_data.get('role', 'STUDENT')
         
         user = User.objects.create_user(**validated_data)
-        
+        if phone:
+            user.phone = phone
+            user.save()
         if role == 'STUDENT':
             student = StudentProfile.objects.create(
                 user=user,
