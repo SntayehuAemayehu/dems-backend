@@ -196,7 +196,9 @@ CHAPA_TEST_SECRET_KEY = config('CHAPA_TEST_SECRET_KEY', default='CHASECK_TEST-xx
 CHAPA_TEST_PUBLISHABLE_KEY = config('CHAPA_TEST_PUBLISHABLE_KEY', default='CHAPUBK_TEST-xxxx')
 CHAPA_BASE_URL = config('CHAPA_BASE_URL', default='https://api.chapa.co/v1')
 BASE_URL = config('BASE_URL', default='http://localhost:8000')
-
+# URL config — used by Chapa callbacks
+BACKEND_URL = config('BACKEND_URL', default='http://localhost:8000')
+FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:3000')
 STRIPE_TEST_SECRET_KEY = config('STRIPE_TEST_SECRET_KEY', default='sk_test_xxxx')
 STRIPE_TEST_PUBLISHABLE_KEY = config('STRIPE_TEST_PUBLISHABLE_KEY', default='pk_test_xxxx')
 STRIPE_API_VERSION = '2023-10-16'
@@ -325,4 +327,9 @@ mimetypes.add_type("video/mp4", ".mp4", True)
 mimetypes.add_type("video/webm", ".webm", True)
 mimetypes.add_type("video/quicktime", ".mov", True)
 mimetypes.add_type("video/x-msvideo", ".avi", True)
+
+#chapa
+BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8000')
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+
 
