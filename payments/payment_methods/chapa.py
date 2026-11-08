@@ -62,7 +62,7 @@ class ChapaMethod(BasePaymentMethod):
             "email": student.user.email,
             "first_name": first_name,
             "last_name": last_name,
-            "phone_number": student.user.phone or '0900000000',
+            "phone_number": student.user.phone or '0900123456',
             "tx_ref": reference,
             "callback_url": f"{self.backend_url}/api/payments/webhook/chapa/",
             "return_url": f"{self.frontend_url}/payments?ref={reference}",
