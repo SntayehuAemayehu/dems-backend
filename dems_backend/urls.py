@@ -6,7 +6,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from django.views.static import serve
 
 
-# ... your existing urlpatterns ...
+
 
 # Add this to serve media files on Render
 
