@@ -116,48 +116,25 @@ class SimulatePaymentView(APIView):
 
 @csrf_exempt
 def chapa_webhook(request):
-    """Handle Chapa webhook callbacks"""
-    if request.method == 'POST':
-        try:
-            data = json.loads(request.body)
-            tx_ref = data.get('tx_ref')
-            status = data.get('status')
-            
-            if status == 'success':
-                # Update transaction status
-                try:
-                    transaction = PaymentTransaction.objects.get(tx_ref=tx_ref)
-                    transaction.status = 'PAID'
-                    transaction.save()
-                    
-                    # Create payment proof
-                    PaymentProof.objects.create(
-                        student=transaction.student,
-                        transaction_id=tx_ref,
-                        amount=transaction.amount,
-                        bank_name='Chapa Payment',
-                        transaction_date=timezone.now().date(),
-                        status='VERIFIED',
-                        verified_at=timezone.now(),
-                        payment_type='SEMESTER'
-                    )
-                    
-                    # Update student payment status
-                    student = transaction.student
-                    student.payment_status = 'VERIFIED'
-                    student.save()
-                    
-                    return JsonResponse({'status': 'success'}, status=200)
-                except PaymentTransaction.DoesNotExist:
-                    return JsonResponse({'status': 'error', 'message': 'Transaction not found'}, status=404)
-            
-            return JsonResponse({'status': 'success'}, status=200)
-        except Exception as e:
-            return JsonResponse({'status': 'error', 'message': str(e)}, status=400)
-    
-    return JsonResponse({'status': 'error', 'message': 'Invalid request'}, status=400)
+    """Handle Chapa webhook — re-verify with Chapa's API for security"""
+    if request.method != 'POST':
+        return JsonResponse({'status': 'error'}, status=400)
 
+    try:
+        data = json.loads(request.body)
+        tx_ref = data.get('tx_ref') or data.get('trx_ref')
+        if not tx_ref:
+            return JsonResponse({'status': 'error', 'message': 'No tx_ref'}, status=400)
 
+        # Verify with Chapa — never trust webhook body alone
+        from .payment_methods import get_payment_method
+        chapa = get_payment_method('chapa')
+        result = chapa.verify_payment(tx_ref)
+
+        return JsonResponse({'status': 'success' if result.get('success') else 'error'})
+    except Exception as e:
+        logger.error(f"Chapa webhook error: {e}")
+        return JsonResponse({'status': 'error', 'message': str(e)}, status=400)
 @csrf_exempt
 def stripe_webhook(request):
     """Handle Stripe webhook callbacks"""
@@ -410,8 +387,11 @@ class PaymentInitializeView(APIView):
         if not method:
             return Response({'error': 'Payment method not found'}, status=400)
         
+        # ✅ FIX: Remove 'amount' and 'method' from data so they don't get passed twice
+        extra_kwargs = {k: v for k, v in request.data.items() if k not in ['amount', 'method']}
+        
         # Initialize payment
-        result = method.initialize_payment(student, amount, **request.data)
+        result = method.initialize_payment(student, amount, **extra_kwargs)
         
         if result.get('success'):
             return Response(result)
