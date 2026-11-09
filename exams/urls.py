@@ -9,17 +9,22 @@ urlpatterns = [
     # Exam CRUD
     path('', views.ExamListView.as_view(), name='exams'),
     path('<int:pk>/', views.ExamDetailView.as_view(), name='exam-detail'),
-    
+
     # Questions
     path('<int:exam_id>/questions/', views.QuestionView.as_view(), name='questions'),
     path('questions/<int:pk>/', views.QuestionDetailView.as_view(), name='question-detail'),
-    
+
     # Exam taking
     path('<int:exam_id>/start/', views.StartExamView.as_view(), name='start-exam'),
     path('attempt/<int:attempt_id>/submit/', views.SubmitExamView.as_view(), name='submit-exam'),
-    
+
+    # ✅ SEB entry + download
+    path('<int:exam_id>/seb-entry/', views.SEBEntryView.as_view(), name='seb-entry'),
+    path('<int:exam_id>/seb-config/', views.SEBDownloadView.as_view(), name='seb-config'),
+
     # Results
     path('results/', views.ExamResultsView.as_view(), name='exam-results'),
+    path('submissions/<int:exam_id>/', views.ExamSubmissionsView.as_view(), name='exam-submissions'),
     
     # Submissions - Teacher views
     path('submissions/<int:exam_id>/', views.ExamSubmissionsView.as_view(), name='exam-submissions'),

@@ -3,6 +3,7 @@
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
+import uuid
 
 class Exam(models.Model):
     EXAM_TYPE_CHOICES = [
@@ -22,12 +23,22 @@ class Exam(models.Model):
     proctoring_enabled = models.BooleanField(default=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    
 
     exam_type = models.CharField(
         max_length=10,
         choices=EXAM_TYPE_CHOICES,
         default='MID',
     )
+      # ✅ SEB fields
+    seb_enabled = models.BooleanField(default=False)
+    seb_config_file = models.FileField(upload_to='seb_configs/', null=True, blank=True)
+    seb_config_key = models.CharField(max_length=64, blank=True)  # CK hash
+    seb_browser_exam_key = models.CharField(max_length=64, blank=True)  # BEK (optional)
+    seb_generated_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.title} - {self.course.course_code}"
 
     def __str__(self):
         return f"{self.title} - {self.course.course_code}"
@@ -171,3 +182,28 @@ class ExamRecording(models.Model):
 
     def __str__(self):
         return f"Recording for attempt {self.attempt_id} chunk {self.chunk_index}"       
+
+class SEBSession(models.Model):
+    """
+    Server-side record created when SEB opens the entry endpoint.
+    Bound to student + exam, short-lived, single-use.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    student = models.ForeignKey('accounts.StudentProfile', on_delete=models.CASCADE, related_name='seb_sessions')
+    exam = models.ForeignKey(Exam, on_delete=models.CASCADE, related_name='seb_sessions')
+    attempt = models.ForeignKey('ExamAttempt', on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    used = models.BooleanField(default=False)
+    ip_hash = models.CharField(max_length=64, blank=True)
+
+    class Meta:
+        indexes = [models.Index(fields=['expires_at', 'used'])]
+
+    def is_valid(self):
+        return not self.used and timezone.now() < self.expires_at
+
+    def __str__(self):
+        return f"SEB {self.student_id} - {self.exam_id} ({'used' if self.used else 'active'})"
+
+    

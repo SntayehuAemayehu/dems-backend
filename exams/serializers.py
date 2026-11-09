@@ -15,44 +15,56 @@ class ExamSerializer(serializers.ModelSerializer):
     course_title = serializers.SerializerMethodField()
     course_code = serializers.SerializerMethodField()
     attempt_count = serializers.SerializerMethodField()
-    is_taken = serializers.SerializerMethodField()  # ✅ NEW FIELD
-    
+    is_taken = serializers.SerializerMethodField()
+    seb_available = serializers.SerializerMethodField()
+
     class Meta:
         model = Exam
         fields = '__all__'
-        read_only_fields = ['created_at']
-    
+        read_only_fields = [
+            'created_at',
+            'seb_config_key',
+            'seb_browser_exam_key',
+            'seb_generated_at',
+        ]
+        extra_kwargs = {
+            'seb_config_file': {'write_only': True, 'required': False},
+        }
+
     def get_course_title(self, obj):
-        return obj.course.title
-    
+        return obj.course.title if obj.course else None
+
     def get_course_code(self, obj):
-        return obj.course.course_code
-    
+        return obj.course.course_code if obj.course else None
+
     def get_attempt_count(self, obj):
-        """Count attempts ONLY for the current student if they are a student."""
         request = self.context.get('request')
-        if request and request.user.is_authenticated and request.user.role == 'STUDENT':
+        if request and request.user.is_authenticated and getattr(request.user, 'role', None) == 'STUDENT':
             try:
                 student = request.user.student_profile
                 return obj.attempts.filter(student=student).count()
-            except:
+            except Exception:
                 return 0
-        # For teachers/admins, show total attempts
         return obj.attempts.count()
 
     def get_is_taken(self, obj):
-        """Check if the CURRENT student has already taken this exam."""
         request = self.context.get('request')
-        if request and request.user.is_authenticated and request.user.role == 'STUDENT':
+        if request and request.user.is_authenticated and getattr(request.user, 'role', None) == 'STUDENT':
             try:
                 student = request.user.student_profile
                 return obj.attempts.filter(
                     student=student,
                     status__in=['IN_PROGRESS', 'SUBMITTED', 'GRADED']
                 ).exists()
-            except:
+            except Exception:
                 return False
         return False
+
+    def get_seb_available(self, obj):
+        try:
+            return bool(obj.seb_enabled and obj.seb_config_file and obj.seb_config_file.name)
+        except Exception:
+            return False
 
 
 class ExamAttemptSerializer(serializers.ModelSerializer):

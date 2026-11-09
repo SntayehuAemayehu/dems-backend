@@ -20,6 +20,16 @@ import os
 from .ai_proctor import AIProctorBackend
 from django.core.files.base import ContentFile
 logger = logging.getLogger(__name__)
+import hashlib
+import secrets
+from django.shortcuts import redirect
+from django.urls import reverse
+from django.conf import settings as django_settings
+from .seb_service import (
+    generate_and_save,
+    verify_config_key_hash,
+)
+from .models import SEBSession  # add SEBSession to existing model import
 
 
 def _can_manage_exam(exam, user):
@@ -126,6 +136,14 @@ class ExamListView(generics.ListCreateAPIView):
             )
         
         serializer.save(created_by=request.user)
+
+                # Auto-generate SEB if published at creation time
+        exam = serializer.instance
+        if exam.is_published and not exam.seb_enabled:
+            try:
+                generate_and_save(exam)
+            except Exception as e:
+                logger.error(f"SEB generation failed on create for exam {exam.id}: {e}")
         
         enrollments = Enrollment.objects.filter(course=course, status='ACTIVE')
         for enrollment in enrollments:
@@ -149,20 +167,22 @@ class ExamDetailView(generics.RetrieveUpdateDestroyAPIView):
         exam = self.get_object()
         if not _can_manage_exam(exam, request.user):
             return Response({'error': 'You do not have permission to update this exam'}, status=status.HTTP_403_FORBIDDEN)
+
+        was_published = exam.is_published
         response = super().update(request, *args, **kwargs)
+
         if response.status_code < 400:
+            exam.refresh_from_db()
+            # ✅ Auto-generate SEB on publish transition
+            if not was_published and exam.is_published:
+                try:
+                    generate_and_save(exam)
+                    logger.info(f"SEB config generated for exam {exam.id}")
+                except Exception as e:
+                    logger.error(f"SEB generation failed for exam {exam.id}: {e}")
+                    # Don't fail the publish — just log
             _broadcast_exam_questions(exam)
         return response
-    
-    def destroy(self, request, *args, **kwargs):
-        exam = self.get_object()
-        if request.user.role != 'ADMIN' and exam.created_by != request.user:
-            return Response(
-                {'error': 'You do not have permission to delete this exam'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        exam.delete()
-        return Response({'message': 'Exam deleted successfully'}, status=status.HTTP_200_OK)
 
 
 class QuestionView(generics.ListCreateAPIView):
@@ -328,54 +348,92 @@ class QuestionDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 class StartExamView(APIView):
     permission_classes = [permissions.IsAuthenticated]
-    
+
     def post(self, request, exam_id):
         try:
             exam = Exam.objects.get(id=exam_id)
         except Exam.DoesNotExist:
             return Response({'error': 'Exam not found'}, status=status.HTTP_404_NOT_FOUND)
-        
+
         if not exam.is_published:
             return Response({'error': 'Exam is not published'}, status=status.HTTP_400_BAD_REQUEST)
-        
+
+        # ✅ SEB gate: if SEB enabled, require valid server-side session
+        if exam.seb_enabled:
+            session_id = request.COOKIES.get('seb_session_id')
+            if not session_id:
+                return Response(
+                    {'error': 'This exam requires Safe Exam Browser. Please open the .seb file.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            try:
+                seb_session = SEBSession.objects.get(id=session_id, exam=exam)
+            except (SEBSession.DoesNotExist, ValueError):
+                return Response(
+                    {'error': 'Invalid SEB session. Please reopen the .seb file.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            if not seb_session.is_valid():
+                return Response(
+                    {'error': 'SEB session expired. Please reopen the .seb file.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
         now = timezone.now()
         if now < exam.start_time:
             return Response({'error': 'Exam has not started yet'}, status=status.HTTP_400_BAD_REQUEST)
         if now > exam.end_time:
             return Response({'error': 'Exam has ended'}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         try:
             student = StudentProfile.objects.get(user=request.user)
         except StudentProfile.DoesNotExist:
             return Response({'error': 'Student profile not found'}, status=status.HTTP_400_BAD_REQUEST)
-        
+
+        # ✅ Bind SEB session to this student
+        if exam.seb_enabled:
+            if seb_session.student_id != student.id:
+                return Response(
+                    {'error': 'SEB session does not belong to this student.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
         if not Enrollment.objects.filter(
             student=student,
             course=exam.course,
             status__in=COURSE_ACCESS_ENROLLMENT_STATUSES,
         ).exists():
             return Response({'error': 'You are not enrolled in this course'}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         if ExamAttempt.objects.filter(student=student, exam=exam, status__in=['IN_PROGRESS', 'SUBMITTED']).exists():
             return Response({'error': 'You have already taken this exam'}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         questions = exam.questions.all()
         if not questions:
             return Response({'error': 'No questions found for this exam'}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         attempt = ExamAttempt.objects.create(
             student=student,
             exam=exam,
             status='IN_PROGRESS',
             end_time=timezone.now() + timezone.timedelta(minutes=exam.duration_minutes)
         )
-        
-        return Response({
+
+        # ✅ Mark SEB session used and bind to attempt
+        if exam.seb_enabled:
+            seb_session.used = True
+            seb_session.attempt = attempt
+            seb_session.save(update_fields=['used', 'attempt'])
+
+        response = Response({
             'attempt_id': attempt.id,
             'questions': QuestionSerializer(questions, many=True).data,
             'duration_minutes': exam.duration_minutes,
             'end_time': attempt.end_time
         })
+        # Clear the cookie (single-use)
+        response.delete_cookie('seb_session_id', path=f'/api/exams/{exam.id}/')
+        return response
 
 
 class SubmitExamView(APIView):
@@ -2581,3 +2639,105 @@ class CourseProctoringImagesView(APIView):
                 for image in images
             ],
         })
+
+class SEBEntryView(APIView):
+    """
+    GET /api/exams/<exam_id>/seb-entry/
+    SEB opens this URL from the .seb startURL.
+    Verifies ConfigKeyHash header, creates SEBSession, redirects to React.
+    """
+    permission_classes = []  # No JWT — SEB opens this before React loads
+    authentication_classes = []
+
+    def get(self, request, exam_id):
+        try:
+            exam = Exam.objects.get(id=exam_id, is_published=True, seb_enabled=True)
+        except Exam.DoesNotExist:
+            return Response({'error': 'Exam not available via SEB'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Verify SEB header
+        received_hash = request.headers.get('X-SafeExamBrowser-ConfigKeyHash', '')
+        absolute_url = request.build_absolute_uri()
+
+        if not verify_config_key_hash(absolute_url, exam.seb_config_key, received_hash):
+            logger.warning(f"SEB ConfigKeyHash mismatch for exam {exam.id}: {received_hash[:16]}...")
+            return Response(
+                {'error': 'Safe Exam Browser verification failed. Please ensure you opened the correct .seb file.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Must be authenticated (student logged in within SEB)
+        if not request.user or not request.user.is_authenticated:
+            # SEB opens without cookie initially — redirect to React login first
+            frontend = getattr(django_settings, 'FRONTEND_URL', 'http://localhost:3000').rstrip('/')
+            return redirect(f"{frontend}/login?seb_return=/exams/{exam.id}/start")
+
+        try:
+            student = StudentProfile.objects.get(user=request.user)
+        except StudentProfile.DoesNotExist:
+            return Response({'error': 'Student profile not found'}, status=status.HTTP_403_FORBIDDEN)
+
+        # Create short-lived session
+        from datetime import timedelta
+        session = SEBSession.objects.create(
+            student=student,
+            exam=exam,
+            expires_at=timezone.now() + timedelta(seconds=120),
+        )
+
+        frontend = getattr(django_settings, 'FRONTEND_URL', 'http://localhost:3000').rstrip('/')
+        response = redirect(f"{frontend}/exams/{exam.id}/start")
+        # HttpOnly cookie scoped to this exam's API path
+        response.set_cookie(
+            'seb_session_id',
+            str(session.id),
+            max_age=120,
+            httponly=True,
+            secure=not django_settings.DEBUG,
+            samesite='Lax',
+            path=f'/api/exams/{exam.id}/',
+        )
+        return response
+
+class SEBDownloadView(APIView):
+    """
+    GET /api/exams/<exam_id>/seb-config/
+    Student downloads the .seb file. Requires auth + enrollment + time window.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, exam_id):
+        try:
+            exam = Exam.objects.get(id=exam_id, is_published=True, seb_enabled=True)
+        except Exam.DoesNotExist:
+            return Response({'error': 'SEB config not available'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not exam.seb_config_file:
+            return Response({'error': 'SEB config not generated yet'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            student = StudentProfile.objects.get(user=request.user)
+        except StudentProfile.DoesNotExist:
+            return Response({'error': 'Student profile not found'}, status=status.HTTP_403_FORBIDDEN)
+
+        if not Enrollment.objects.filter(
+            student=student,
+            course=exam.course,
+            status__in=COURSE_ACCESS_ENROLLMENT_STATUSES,
+        ).exists():
+            return Response({'error': 'Not enrolled'}, status=status.HTTP_403_FORBIDDEN)
+
+        now = timezone.now()
+        if now > exam.end_time:
+            return Response({'error': 'Exam has ended'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Serve file
+        from django.http import FileResponse
+        file_handle = exam.seb_config_file.open('rb')
+        response = FileResponse(
+            file_handle,
+            as_attachment=True,
+            filename=f"exam_{exam.id}_{exam.title.replace(' ', '_')}.seb",
+            content_type='application/octet-stream',
+        )
+        return response
