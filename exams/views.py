@@ -2702,9 +2702,15 @@ class SEBEntryView(APIView):
 class SEBDownloadView(APIView):
     """
     GET /api/exams/<exam_id>/seb-config/
-    Student downloads the .seb file. Requires auth + enrollment + time window.
+    Serves the .seb config file so the OS can hand it to Safe Exam Browser.
+    This endpoint is intentionally public — the .seb file contains only browser
+    settings and the startURL; it has no exam questions or sensitive data.
+    Real security is enforced at seb-entry (ConfigKeyHash) and start-exam
+    (seb_session_id cookie + JWT). The file is served inline (not as an
+    attachment) so the seb:// URL scheme can open SEB directly without a download.
     """
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = []   # Public — SEB fetches this before the student logs in
+    authentication_classes = []
 
     def get(self, request, exam_id):
         try:
@@ -2715,29 +2721,18 @@ class SEBDownloadView(APIView):
         if not exam.seb_config_file:
             return Response({'error': 'SEB config not generated yet'}, status=status.HTTP_404_NOT_FOUND)
 
-        try:
-            student = StudentProfile.objects.get(user=request.user)
-        except StudentProfile.DoesNotExist:
-            return Response({'error': 'Student profile not found'}, status=status.HTTP_403_FORBIDDEN)
-
-        if not Enrollment.objects.filter(
-            student=student,
-            course=exam.course,
-            status__in=COURSE_ACCESS_ENROLLMENT_STATUSES,
-        ).exists():
-            return Response({'error': 'Not enrolled'}, status=status.HTTP_403_FORBIDDEN)
-
         now = timezone.now()
         if now > exam.end_time:
             return Response({'error': 'Exam has ended'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Serve file
+        # Serve inline with application/seb content-type so the OS/browser
+        # hands the file directly to the Safe Exam Browser application.
         from django.http import FileResponse
         file_handle = exam.seb_config_file.open('rb')
         response = FileResponse(
             file_handle,
-            as_attachment=True,
+            as_attachment=False,
             filename=f"exam_{exam.id}_{exam.title.replace(' ', '_')}.seb",
-            content_type='application/octet-stream',
+            content_type='application/seb',
         )
         return response
