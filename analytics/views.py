@@ -3649,12 +3649,6 @@ class BatchExportView(APIView):
         response['Content-Disposition'] = f'attachment; filename="{resource_type}_export.csv"'
         return response 
 
-
-
-# ================================================================
-# ============= AI ASSISTANT VIEW =============
-# ================================================================
-# analytics/views.py - AT THE BOTTOM OF THE FILE
 import json
 from curl_cffi import requests as curl_requests
 from django.conf import settings
@@ -3672,30 +3666,34 @@ class AIAssistantView(APIView):
             return Response({'error': 'Question is required'}, status=400)
 
         try:
-            context = "You are an AI assistant for the DEMS University system. Here is the complete data for the entire university:\n\n"
+            # ✅ 1. TELL THE AI TO BE SMART ABOUT TYPOS AND SPELLING
+            context = (
+                "You are a smart AI assistant for the DEMS University system. "
+                "The user might have spelling mistakes (e.g., 'exms' instead of 'exams', 'studnts' instead of 'students'). "
+                "You must be smart and understand what they mean. "
+                "Here is the complete data for the entire university:\n\n"
+            )
             
-            # ✅ 1. LOOP THROUGH EVERY APP IN YOUR PROJECT
+            # ✅ 2. DYNAMICALLY READ EVERY APP AND MODEL
             for app_config in apps.get_app_configs():
-                # Skip Django's internal apps to save space and avoid errors
+                # Skip Django's internal apps to save space
                 if app_config.name in ['admin', 'auth', 'contenttypes', 'sessions', 'messages', 'staticfiles', 'rest_framework', 'django_ask_ai', 'corsheaders', 'channels']:
                     continue
 
                 for model in app_config.get_models():
-                    # Skip sensitive models
                     if model.__name__ in ['PasswordResetOTP', 'SystemLog', 'StudentPaymentSchedule', 'AskLog']:
                         continue
                         
-                    # Limit to 50 records per table to prevent Groq from timing out
-                    records = model.objects.all()[:50] 
+                    # Increased limit to 200 so it can count most things accurately
+                    records = model.objects.all()[:200] 
                     if not records.exists():
                         continue
 
-                    context += f"\n--- TABLE: {model.__name__.upper()} (App: {app_config.label}) ---\n"
+                    context += f"\n--- TABLE: {model.__name__.upper()} ---\n"
                     for obj in records:
                         data_dict = {}
                         for field in obj._meta.fields:
                             field_name = field.name
-                            # Skip passwords and sensitive face data
                             if field_name in ['password', 'face_embedding', 'face_reference_image', 'face_verification_history']:
                                 continue 
                             
@@ -3705,7 +3703,7 @@ class AIAssistantView(APIView):
                         
                         context += f"{json.dumps(data_dict)}\n"
 
-            # ✅ 2. SEND THE MASSIVE CONTEXT TO GROQ
+            # ✅ 3. SEND TO GROQ
             payload = {
                 "model": "openai/gpt-oss-20b",
                 "messages": [
@@ -3725,7 +3723,7 @@ class AIAssistantView(APIView):
                 headers=headers,
                 json=payload,
                 impersonate="chrome",
-                timeout=60 # Increased timeout for large data
+                timeout=60
             )
 
             if response.status_code != 200:
@@ -3740,3 +3738,4 @@ class AIAssistantView(APIView):
 
         except Exception as e:
             return Response({'error': str(e)}, status=500)
+
