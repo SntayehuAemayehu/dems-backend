@@ -1,11 +1,18 @@
 # backend/notifications/sms_service.py
 import os
 import requests
-from textbee import Textbee
 
-# SDK client (reads TEXTBEE_API_KEY from environment automatically)
-# TEMPORARY TEST ONLY
-textbee_client = Textbee(api_key="txb_NW7jYMxKZ0TzsR7wiG1r7aYN7snB9OvX")
+# Gracefully handle missing textbee package so the server still starts
+try:
+    from textbee import Textbee
+    # SDK client (reads TEXTBEE_API_KEY from environment automatically)
+    # TEMPORARY TEST ONLY
+    textbee_client = Textbee(api_key="txb_NW7jYMxKZ0TzsR7wiG1r7aYN7snB9OvX")
+    _TEXTBEE_AVAILABLE = True
+except ImportError:
+    textbee_client = None
+    _TEXTBEE_AVAILABLE = False
+    print("⚠️  WARNING: 'textbee' package not installed. SMS (send_bulk_same_message) will be disabled. Run: pip install textbee")
 def format_ethiopian_phone(phone):
     """Format 09... or 9... to +2519..."""
     if not phone:
@@ -24,6 +31,10 @@ def send_bulk_same_message(recipients, message):
     Sends the SAME message to many people.
     Uses the official SDK (POST /gateway/send-sms).
     """
+    if not _TEXTBEE_AVAILABLE or textbee_client is None:
+        print("❌ send_bulk_same_message: textbee package not available. SMS not sent.")
+        return None
+
     formatted = [format_ethiopian_phone(p) for p in recipients if p]
     formatted = [p for p in formatted if p]
 

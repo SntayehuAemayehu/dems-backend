@@ -201,6 +201,8 @@ BASE_URL = config('BASE_URL', default='http://localhost:8000')
 # URL config — used by Chapa callbacks
 BACKEND_URL = config('BACKEND_URL', default='http://localhost:8000')
 FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:3000')
+SEB_ENABLED = config('SEB_ENABLED', default=False, cast=bool)
+SEB_BASE_URL = config('SEB_BASE_URL', default='http://localhost:8000')
 STRIPE_TEST_SECRET_KEY = config('STRIPE_TEST_SECRET_KEY', default='sk_test_xxxx')
 STRIPE_TEST_PUBLISHABLE_KEY = config('STRIPE_TEST_PUBLISHABLE_KEY', default='pk_test_xxxx')
 STRIPE_API_VERSION = '2023-10-16'
@@ -213,7 +215,7 @@ OPENAI_API_KEY = config('OPENAI_API_KEY', default='')
 GROQ_API_KEY = config('GROQ_API_KEY', default='')
 OPENAI_MODEL = config('OPENAI_MODEL', default='gpt-4')
 GEMINI_API_KEY = config('GEMINI_API_KEY', default='')
-GEMINI_MODEL = config('GEMINI_MODEL', default='gemini-3.8-flash')
+GEMINI_MODEL = config('GEMINI_MODEL', default='gemini-1.5-flash')
 AI_PROCTOR_SUSPICIOUS_THRESHOLD = 3
 AI_PROCTOR_WARNING_THRESHOLD = 2
 AI_PROCTOR_AUTO_FLAG = True

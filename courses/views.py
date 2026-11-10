@@ -1390,7 +1390,7 @@ class CourseAIChatView(APIView):
                         }],
                     },
                     'contents': contents,
-                    'generationConfig': {'maxOutputTokens': 512, 'temperature': 0.4},
+                    'generationConfig': {'maxOutputTokens': 2048, 'temperature': 0.4},
                 },
                 timeout=(5, 25),
             )
