@@ -38,7 +38,6 @@ import logging
 from io import BytesIO
 import csv
 from django.http import HttpResponse
-
 logger = logging.getLogger(__name__)
 
 # ============= PERMISSION CLASSES =============
@@ -3648,4 +3647,34 @@ class BatchExportView(APIView):
             content_type='text/csv'
         )
         response['Content-Disposition'] = f'attachment; filename="{resource_type}_export.csv"'
-        return response               
+        return response 
+
+
+
+# ================================================================
+# ============= AI ASSISTANT VIEW =============
+# ================================================================
+# analytics/views.py - AT THE BOTTOM OF THE FILE
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import permissions
+from accounts.models import StudentProfile
+
+class AIAssistantView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        question = request.data.get('question')
+        if not question:
+            return Response({'error': 'Question is required'}, status=400)
+
+        try:
+            # ✅ Native django-ask-ai method
+            answer = StudentProfile.objects.ask(question, user=request.user)
+            
+            if isinstance(answer, dict) and 'answer' in answer:
+                return Response({'answer': answer['answer']})
+            return Response({'answer': str(answer)})
+            
+        except Exception as e:
+            return Response({'error': f'AI Error: {str(e)}'}, status=500)

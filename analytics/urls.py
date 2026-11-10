@@ -125,6 +125,8 @@ urlpatterns = [
     path('live-pulse/', LivePulseView.as_view()),
     path('sparkline/', SparklineDataView.as_view()),
     path('activity-feed/', ActivityFeedView.as_view()),
+    path('ai/chat/', views.AIAssistantView.as_view(), name='ai-chat'),
+
 
 
 

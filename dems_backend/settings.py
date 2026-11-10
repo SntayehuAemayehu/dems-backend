@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'analytics',
     'chat',
     'news',
+    'django_ask_ai',
 ]
 
 MIDDLEWARE = [
@@ -209,6 +210,7 @@ STRIPE_WEBHOOK_SECRET = config('STRIPE_WEBHOOK_SECRET', default='')
 # AI & PROCTORING CONFIGURATION
 # ================================================================
 OPENAI_API_KEY = config('OPENAI_API_KEY', default='')
+GROQ_API_KEY = config('GROQ_API_KEY', default='')
 OPENAI_MODEL = config('OPENAI_MODEL', default='gpt-4')
 GEMINI_API_KEY = config('GEMINI_API_KEY', default='')
 GEMINI_MODEL = config('GEMINI_MODEL', default='gemini-3.8-flash')
@@ -334,5 +336,25 @@ mimetypes.add_type("video/x-msvideo", ".avi", True)
 #chapa
 BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8000')
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
-
-
+#AI Chat
+# ================================================================
+# DJANGO-ASK-AI CONFIGURATION
+# ================================================================
+# ================================================================
+# DJANGO-ASK-AI CONFIGURATION (GROQ + READ-ONLY)
+# ================================================================
+# ================================================================
+# DJANGO-ASK-AI CONFIGURATION
+# ================================================================
+# ================================================================
+# DJANGO-ASK-AI CONFIGURATION
+# ================================================================
+ASK_AI = {
+    "BACKENDS": {
+        "default": {
+            "PROVIDER": "groq",
+            "MODEL": "openai/gpt-oss-20b",
+            "API_KEY": config('GROQ_API_KEY', default=''),
+        }
+    },
+}

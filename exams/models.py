@@ -1,11 +1,11 @@
 # exams/models.py - COMPLETE
-
+from django_ask_ai import AskMixin
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
 import uuid
 
-class Exam(models.Model):
+class Exam(AskMixin, models.Model):
     EXAM_TYPE_CHOICES = [
         ('QUIZ', 'Quiz'),
         ('MID', 'Mid Exam'),
@@ -71,7 +71,7 @@ class Question(models.Model):
         return f"{self.text[:50]}..."
 
 
-class ExamAttempt(models.Model):
+class ExamAttempt(AskMixin, models.Model):
     STATUS_CHOICES = [
         ('NOT_STARTED', 'Not Started'),
         ('IN_PROGRESS', 'In Progress'),

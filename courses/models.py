@@ -1,5 +1,5 @@
 # courses/models.py - COMPLETE FIXED VERSION WITH VIDEO SUPPORT
-
+from django_ask_ai import AskMixin
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
@@ -9,7 +9,7 @@ from decimal import Decimal
 COURSE_ACCESS_ENROLLMENT_STATUSES = ('ACTIVE', 'COMPLETED')
 
 
-class Course(models.Model):
+class Course(AskMixin, models.Model):
     course_code = models.CharField(max_length=20, unique=True)
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
@@ -92,7 +92,7 @@ class CourseAIConversation(models.Model):
         return f"{self.user_id} - {self.course_id}: {self.title}"
 
 
-class CourseMaterial(models.Model):
+class CourseMaterial(AskMixin, models.Model):
     MATERIAL_TYPES = [
         ('PDF', 'PDF Document'),
         ('VIDEO', 'Video'),
@@ -132,7 +132,7 @@ class CourseMaterial(models.Model):
         return None
 
 
-class Enrollment(models.Model):
+class Enrollment(AskMixin, models.Model):
     """Student enrollment with full grade tracking"""
     
     STATUS_CHOICES = [

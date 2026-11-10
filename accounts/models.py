@@ -1,5 +1,5 @@
 # accounts/models.py - COMPLETE FIXED VERSION
-
+from django_ask_ai import AskMixin
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
 from django.db import models
 from django.utils import timezone
@@ -23,7 +23,7 @@ class UserManager(BaseUserManager):
         return self.create_user(email, password, **extra_fields)
 
 
-class User(AbstractBaseUser, PermissionsMixin):
+class User(AskMixin, AbstractBaseUser, PermissionsMixin):
     ROLE_CHOICES = [
         ('STUDENT', 'Student'),
         ('TEACHER', 'Teacher'),
@@ -54,7 +54,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         return f"{self.full_name} ({self.email})"
 
 
-class StudentProfile(models.Model):
+class StudentProfile(AskMixin, models.Model):
     GENDER_CHOICES = [
         ('MALE', 'Male'),
         ('FEMALE', 'Female'),
@@ -72,7 +72,8 @@ class StudentProfile(models.Model):
         ('FRESH', 'Fresh Student'),
         ('SENIOR', 'Senior Student'),
     ]
-    
+    ask_exclude = ['face_embedding', 'face_reference_image', 'password_reset_token']
+
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='student_profile')
     student_id = models.CharField(max_length=50, unique=True, null=True, blank=True, default=None)
     date_of_birth = models.DateField(null=True, blank=True)
@@ -127,7 +128,7 @@ class StudentProfile(models.Model):
     activated_at = models.DateTimeField(null=True, blank=True)
     activated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='activated_students')
     
-    # ============ FACE VERIFICATION FIELDS (FIXED INDENTATION) ============
+    # ============ FACE VERIFICATION FIELDS ============
     face_embedding = models.JSONField(null=True, blank=True, help_text="128-d vector representing the student's face")
     face_enrolled = models.BooleanField(default=False)
     face_enrolled_at = models.DateTimeField(null=True, blank=True)
@@ -176,10 +177,8 @@ class StudentProfile(models.Model):
         self.save()
         return self.cgpa
     
-    class StudentProfile(models.Model):
-    # ... your existing fields ...
-
-     def get_overall_grade_summary(self):
+    # ✅ FIXED: This function is now properly inside the StudentProfile class
+    def get_overall_grade_summary(self):
         """Get overall grade summary for all courses"""
         from courses.models import Enrollment
 
@@ -233,7 +232,7 @@ class StudentProfile(models.Model):
             ]),
         }
      
-class TeacherProfile(models.Model):
+class TeacherProfile(AskMixin, models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='teacher_profile')
     employee_id = models.CharField(max_length=50, unique=True, null=True, blank=True)
     department = models.CharField(max_length=100, blank=True)
@@ -246,7 +245,7 @@ class TeacherProfile(models.Model):
         return f"Teacher: {self.user.full_name}"
 
 
-class Department(models.Model):
+class Department(AskMixin, models.Model):
     name = models.CharField(max_length=100, unique=True)
     code = models.CharField(max_length=10, unique=True)
     head = models.OneToOneField(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='headed_department')
