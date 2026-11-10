@@ -3654,7 +3654,7 @@ from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import permissions
-from django.apps import apps
+from accounts.models import StudentProfile, TeacherProfile, Department, User
 
 class AIAssistantView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -3665,53 +3665,38 @@ class AIAssistantView(APIView):
             return Response({'error': 'Question is required'}, status=400)
 
         try:
-            context = (
-                "You are a smart AI assistant for the DEMS University system. "
-                "The user might have spelling mistakes. Understand what they mean. "
-                "Here is a small sample of the data:\n\n"
-            )
+            # ✅ DYNAMICALLY BUILD THE CONTEXT FROM YOUR DATABASE
+            context = "You are a helpful assistant for Mekdela Amba University. Here is the data:\n\n"
             
-            # ✅ ONLY read these 4 apps to save tokens
-            apps_to_read = ['accounts', 'courses', 'exams', 'payments']
+            # Users (includes Department Heads)
+            context += "USERS:\n"
+            for user in User.objects.all():
+                context += f"- {user.full_name} (Role: {user.role}, Email: {user.email})\n"
             
-            for app_name in apps_to_read:
-                try:
-                    app_config = apps.get_app_config(app_name)
-                except LookupError:
-                    continue
+            # Departments and their Heads
+            context += "\nDEPARTMENTS:\n"
+            for dept in Department.objects.all():
+                head_name = dept.head.full_name if dept.head else "Not Assigned"
+                context += f"- {dept.name} (Head: {head_name})\n"
+            
+            # Students
+            context += "\nSTUDENTS:\n"
+            for student in StudentProfile.objects.all():
+                context += f"- {student.user.full_name} (Dept: {student.department}, Year: {student.year})\n"
+            
+            # Teachers
+            context += "\nTEACHERS:\n"
+            for teacher in TeacherProfile.objects.all():
+                context += f"- {teacher.user.full_name} (Dept: {teacher.department})\n"
 
-                for model in app_config.get_models():
-                    if model.__name__ in ['PasswordResetOTP', 'SystemLog', 'StudentPaymentSchedule', 'AskLog']:
-                        continue
-                        
-                    try:
-                        # ✅ ONLY 2 RECORDS PER TABLE
-                        records = model.objects.all()[:2] 
-                        if not records.exists():
-                            continue
-                    except Exception as e:
-                        continue
-
-                    context += f"\n--- TABLE: {model.__name__.upper()} ---\n"
-                    for obj in records:
-                        data_dict = {}
-                        for field in obj._meta.fields:
-                            field_name = field.name
-                            if field_name in ['password', 'face_embedding', 'face_reference_image']:
-                                continue 
-                            value = getattr(obj, field_name)
-                            if value is not None:
-                                data_dict[field_name] = str(value)
-                        context += f"{json.dumps(data_dict)}\n"
-
+            # ✅ CALL GROQ WITH CURL_CFFI (BYPASSES CLOUDFLARE)
             payload = {
                 "model": "openai/gpt-oss-20b",
                 "messages": [
                     {"role": "system", "content": context},
                     {"role": "user", "content": question}
                 ],
-                "temperature": 0.0,
-                "max_tokens": 200  # ✅ RESERVE ONLY 200 TOKENS FOR THE ANSWER
+                "temperature": 0.0
             }
 
             headers = {
@@ -3723,8 +3708,8 @@ class AIAssistantView(APIView):
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers=headers,
                 json=payload,
-                impersonate="chrome",
-                timeout=60
+                impersonate="chrome",  # 🔑 This bypasses the TLS fingerprint block
+                timeout=30
             )
 
             if response.status_code != 200:
