@@ -3661,7 +3661,7 @@ from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import permissions
-from accounts.models import StudentProfile, TeacherProfile, Department, User
+from django.apps import apps
 
 class AIAssistantView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -3672,31 +3672,40 @@ class AIAssistantView(APIView):
             return Response({'error': 'Question is required'}, status=400)
 
         try:
-            # ✅ DYNAMICALLY BUILD THE CONTEXT FROM YOUR DATABASE
-            context = "You are a helpful assistant for Mekdela Amba University. Here is the data:\n\n"
+            context = "You are an AI assistant for the DEMS University system. Here is the complete data for the entire university:\n\n"
             
-            # Users (includes Department Heads)
-            context += "USERS:\n"
-            for user in User.objects.all():
-                context += f"- {user.full_name} (Role: {user.role}, Email: {user.email})\n"
-            
-            # Departments and their Heads
-            context += "\nDEPARTMENTS:\n"
-            for dept in Department.objects.all():
-                head_name = dept.head.full_name if dept.head else "Not Assigned"
-                context += f"- {dept.name} (Head: {head_name})\n"
-            
-            # Students
-            context += "\nSTUDENTS:\n"
-            for student in StudentProfile.objects.all():
-                context += f"- {student.user.full_name} (Dept: {student.department}, Year: {student.year})\n"
-            
-            # Teachers
-            context += "\nTEACHERS:\n"
-            for teacher in TeacherProfile.objects.all():
-                context += f"- {teacher.user.full_name} (Dept: {teacher.department})\n"
+            # ✅ 1. LOOP THROUGH EVERY APP IN YOUR PROJECT
+            for app_config in apps.get_app_configs():
+                # Skip Django's internal apps to save space and avoid errors
+                if app_config.name in ['admin', 'auth', 'contenttypes', 'sessions', 'messages', 'staticfiles', 'rest_framework', 'django_ask_ai', 'corsheaders', 'channels']:
+                    continue
 
-            # ✅ CALL GROQ WITH CURL_CFFI (BYPASSES CLOUDFLARE)
+                for model in app_config.get_models():
+                    # Skip sensitive models
+                    if model.__name__ in ['PasswordResetOTP', 'SystemLog', 'StudentPaymentSchedule', 'AskLog']:
+                        continue
+                        
+                    # Limit to 50 records per table to prevent Groq from timing out
+                    records = model.objects.all()[:50] 
+                    if not records.exists():
+                        continue
+
+                    context += f"\n--- TABLE: {model.__name__.upper()} (App: {app_config.label}) ---\n"
+                    for obj in records:
+                        data_dict = {}
+                        for field in obj._meta.fields:
+                            field_name = field.name
+                            # Skip passwords and sensitive face data
+                            if field_name in ['password', 'face_embedding', 'face_reference_image', 'face_verification_history']:
+                                continue 
+                            
+                            value = getattr(obj, field_name)
+                            if value is not None:
+                                data_dict[field_name] = str(value)
+                        
+                        context += f"{json.dumps(data_dict)}\n"
+
+            # ✅ 2. SEND THE MASSIVE CONTEXT TO GROQ
             payload = {
                 "model": "openai/gpt-oss-20b",
                 "messages": [
@@ -3715,8 +3724,8 @@ class AIAssistantView(APIView):
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers=headers,
                 json=payload,
-                impersonate="chrome",  # 🔑 This bypasses the TLS fingerprint block
-                timeout=30
+                impersonate="chrome",
+                timeout=60 # Increased timeout for large data
             )
 
             if response.status_code != 200:
