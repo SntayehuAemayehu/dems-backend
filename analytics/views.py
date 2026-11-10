@@ -3657,6 +3657,14 @@ from rest_framework.response import Response
 from rest_framework import permissions
 from django.apps import apps
 
+import json
+from curl_cffi import requests as curl_requests
+from django.conf import settings
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import permissions
+from django.apps import apps
+
 class AIAssistantView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -3666,17 +3674,13 @@ class AIAssistantView(APIView):
             return Response({'error': 'Question is required'}, status=400)
 
         try:
-            # ✅ 1. TELL THE AI TO BE SMART ABOUT TYPOS AND SPELLING
             context = (
                 "You are a smart AI assistant for the DEMS University system. "
-                "The user might have spelling mistakes (e.g., 'exms' instead of 'exams', 'studnts' instead of 'students'). "
-                "You must be smart and understand what they mean. "
+                "The user might have spelling mistakes. Understand what they mean. "
                 "Here is the complete data for the entire university:\n\n"
             )
             
-            # ✅ 2. DYNAMICALLY READ EVERY APP AND MODEL
             for app_config in apps.get_app_configs():
-                # Skip Django's internal apps to save space
                 if app_config.name in ['admin', 'auth', 'contenttypes', 'sessions', 'messages', 'staticfiles', 'rest_framework', 'django_ask_ai', 'corsheaders', 'channels']:
                     continue
 
@@ -3684,9 +3688,13 @@ class AIAssistantView(APIView):
                     if model.__name__ in ['PasswordResetOTP', 'SystemLog', 'StudentPaymentSchedule', 'AskLog']:
                         continue
                         
-                    # Increased limit to 200 so it can count most things accurately
-                    records = model.objects.all()[:200] 
-                    if not records.exists():
+                    # ✅ SAFETY CHECK: Try to read the table, if it fails (e.g. missing table), skip it.
+                    try:
+                        records = model.objects.all()[:200] 
+                        if not records.exists():
+                            continue
+                    except Exception as e:
+                        print(f"Skipping model {model.__name__} due to DB error: {e}")
                         continue
 
                     context += f"\n--- TABLE: {model.__name__.upper()} ---\n"
@@ -3703,7 +3711,6 @@ class AIAssistantView(APIView):
                         
                         context += f"{json.dumps(data_dict)}\n"
 
-            # ✅ 3. SEND TO GROQ
             payload = {
                 "model": "openai/gpt-oss-20b",
                 "messages": [
@@ -3738,4 +3745,3 @@ class AIAssistantView(APIView):
 
         except Exception as e:
             return Response({'error': str(e)}, status=500)
-
