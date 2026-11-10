@@ -54,12 +54,10 @@ def _broadcast_exam_questions(exam):
 # ============================================================
 
 # exams/views.py
-
 class ExamListView(generics.ListCreateAPIView):
     serializer_class = ExamSerializer
     permission_classes = [permissions.IsAuthenticated]
     
-    # ✅ FIX: Pass request context to serializer so is_taken works correctly
     def get_serializer_context(self):
         context = super().get_serializer_context()
         context['request'] = self.request
@@ -69,9 +67,9 @@ class ExamListView(generics.ListCreateAPIView):
         user = self.request.user
         
         if user.role == 'TEACHER':
+            # ✅ FIX: Just filter by instructor. The missing table was crashing this query.
             return Exam.objects.filter(
-                Q(course__instructor=user) |
-                Q(examiner_assignments__examiner=user, examiner_assignments__attempt__status='IN_PROGRESS')
+                Q(course__instructor=user)
             ).distinct()
         
         elif user.role == 'STUDENT':
@@ -137,7 +135,6 @@ class ExamListView(generics.ListCreateAPIView):
         
         serializer.save(created_by=request.user)
 
-                # Auto-generate SEB if published at creation time
         exam = serializer.instance
         if exam.is_published and not exam.seb_enabled:
             try:

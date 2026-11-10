@@ -30,7 +30,6 @@ import logging
 import requests
 
 logger = logging.getLogger(__name__)
-
 class CourseListView(generics.ListCreateAPIView):
     serializer_class = CourseSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -54,6 +53,7 @@ class CourseListView(generics.ListCreateAPIView):
                 return Course.objects.none()
 
         elif user.role == 'TEACHER':
+            # ✅ FIX: Teacher sees ALL courses where they are the assigned instructor
             queryset = queryset.filter(instructor=user)
 
         elif user.role == 'DEPT_HEAD':
@@ -87,14 +87,14 @@ class CourseListView(generics.ListCreateAPIView):
         if request.user.role == 'ADMIN':
             data['is_approved'] = True
 
-        # ✅ Respect the instructor from the payload (set by Dept Head / Admin).
-        # Only fall back to the current user when no instructor is provided.
+        # ✅ FIX: Respect the instructor from the payload (set by Dept Head)
         instructor_id = data.get('instructor') or request.user.id
 
         serializer = self.get_serializer(data=data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+        # Save with the specific instructor ID selected by Dept Head
         serializer.save(instructor_id=instructor_id)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 

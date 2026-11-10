@@ -3013,9 +3013,11 @@ class DeptHeadTeacherListView(APIView):
             
             search_term = request.query_params.get('search', '')
             
-            # Get teachers from TeacherProfile
+            # Get teachers from TeacherProfile, excluding the Dept Head themselves
             teachers = TeacherProfile.objects.filter(
                 department=department.name
+            ).exclude(
+                user=user  # ✅ FIX: Remove the Dept Head from the teacher list
             ).select_related('user').order_by('-joining_date')
             
             if search_term:
@@ -3032,14 +3034,12 @@ class DeptHeadTeacherListView(APIView):
                 if teacher.user and teacher.user.id not in seen_ids:
                     seen_ids.add(teacher.user.id)
                     
-                    # Get courses taught by this teacher
                     from courses.models import Course
                     courses_taught = Course.objects.filter(
                         instructor=teacher.user,
                         department=department
                     ).count()
                     
-                    # Get enrolled students in those courses
                     from courses.models import Enrollment
                     student_count = Enrollment.objects.filter(
                         course__instructor=teacher.user,
@@ -3062,15 +3062,14 @@ class DeptHeadTeacherListView(APIView):
                         'is_active': teacher.user.is_active,
                     })
             
-            # Also get users with role TEACHER or DEPT_HEAD not in TeacherProfile
+            # Also get users with role TEACHER not in TeacherProfile
             teacher_users = User.objects.filter(
-                role__in=['TEACHER', 'DEPT_HEAD'],
+                role='TEACHER', # ✅ Only get TEACHER role, not DEPT_HEAD
                 is_active=True
             ).exclude(id=user.id)
             
             for u in teacher_users:
                 if u.id not in seen_ids and u.id not in [t.get('user_id') for t in result]:
-                    # Check if they are in the department
                     from courses.models import Course
                     courses_in_dept = Course.objects.filter(
                         instructor=u,
@@ -3183,8 +3182,6 @@ class DeptHeadCourseListView(APIView):
                 'count': 0,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
 class DeptHeadCourseApproveView(APIView):
     """Approve or reject a course"""
     permission_classes = [permissions.IsAuthenticated]

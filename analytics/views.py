@@ -3655,6 +3655,9 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import permissions
 from accounts.models import StudentProfile, TeacherProfile, Department, User
+from courses.models import Course, Enrollment
+from exams.models import Exam
+from payments.models import PaymentProof
 
 class AIAssistantView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -3665,38 +3668,51 @@ class AIAssistantView(APIView):
             return Response({'error': 'Question is required'}, status=400)
 
         try:
-            # ✅ DYNAMICALLY BUILD THE CONTEXT FROM YOUR DATABASE
-            context = "You are a helpful assistant for Mekdela Amba University. Here is the data:\n\n"
+            context = "You are a smart AI assistant for Mekdela Amba University. The user might have typos. Here is the data:\n\n"
             
-            # Users (includes Department Heads)
+            # ✅ USERS (With DOB and Phone)
             context += "USERS:\n"
-            for user in User.objects.all():
-                context += f"- {user.full_name} (Role: {user.role}, Email: {user.email})\n"
+            for user in User.objects.all()[:10]:  # Limit to 10
+                context += f"- {user.full_name} (Email: {user.email}, Phone: {user.phone}, Role: {user.role})\n"
             
-            # Departments and their Heads
+            # ✅ STUDENTS (With Profile details)
+            context += "\nSTUDENTS:\n"
+            for student in StudentProfile.objects.all()[:10]:
+                dob = student.date_of_birth if student.date_of_birth else "N/A"
+                context += f"- {student.user.full_name} (ID: {student.student_id}, Dept: {student.department}, Year: {student.year}, DOB: {dob})\n"
+            
+            # ✅ DEPARTMENTS
             context += "\nDEPARTMENTS:\n"
-            for dept in Department.objects.all():
+            for dept in Department.objects.all()[:5]:
                 head_name = dept.head.full_name if dept.head else "Not Assigned"
                 context += f"- {dept.name} (Head: {head_name})\n"
             
-            # Students
-            context += "\nSTUDENTS:\n"
-            for student in StudentProfile.objects.all():
-                context += f"- {student.user.full_name} (Dept: {student.department}, Year: {student.year})\n"
+            # ✅ COURSES
+            context += "\nCOURSES:\n"
+            for course in Course.objects.all()[:10]:
+                dept_name = course.department.name if course.department else "N/A"
+                context += f"- {course.course_code}: {course.title} (Dept: {dept_name}, Credits: {course.credit_hours})\n"
             
-            # Teachers
-            context += "\nTEACHERS:\n"
-            for teacher in TeacherProfile.objects.all():
-                context += f"- {teacher.user.full_name} (Dept: {teacher.department})\n"
+            # ✅ EXAMS
+            context += "\nEXAMS:\n"
+            for exam in Exam.objects.all()[:5]:
+                course_name = exam.course.title if exam.course else "N/A"
+                context += f"- {exam.title} (Course: {course_name}, Marks: {exam.total_marks})\n"
 
-            # ✅ CALL GROQ WITH CURL_CFFI (BYPASSES CLOUDFLARE)
+            # ✅ PAYMENTS
+            context += "\nPAYMENTS:\n"
+            for payment in PaymentProof.objects.all()[:5]:
+                context += f"- {payment.student.user.full_name} paid ETB {payment.amount} (Status: {payment.status})\n"
+
+            # ✅ CALL GROQ
             payload = {
                 "model": "openai/gpt-oss-20b",
                 "messages": [
                     {"role": "system", "content": context},
                     {"role": "user", "content": question}
                 ],
-                "temperature": 0.0
+                "temperature": 0.0,
+                "max_tokens": 300  # ✅ Keep answer short to avoid token limit
             }
 
             headers = {
@@ -3708,19 +3724,15 @@ class AIAssistantView(APIView):
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers=headers,
                 json=payload,
-                impersonate="chrome",  # 🔑 This bypasses the TLS fingerprint block
-                timeout=30
+                impersonate="chrome",
+                timeout=60
             )
 
             if response.status_code != 200:
-                return Response(
-                    {'error': f"Groq error {response.status_code}: {response.text[:200]}"},
-                    status=500
-                )
+                return Response({'error': f"Groq error {response.status_code}: {response.text[:200]}"}, status=500)
 
             data = response.json()
-            answer = data['choices'][0]['message']['content']
-            return Response({'answer': answer})
+            return Response({'answer': data['choices'][0]['message']['content']})
 
         except Exception as e:
             return Response({'error': str(e)}, status=500)
