@@ -3668,26 +3668,28 @@ class AIAssistantView(APIView):
             context = (
                 "You are a smart AI assistant for the DEMS University system. "
                 "The user might have spelling mistakes. Understand what they mean. "
-                "Here is the complete data for the entire university:\n\n"
+                "Here is a small sample of the data:\n\n"
             )
             
-            for app_config in apps.get_app_configs():
-                # Skip Django internal apps
-                if app_config.name in ['admin', 'auth', 'contenttypes', 'sessions', 'messages', 'staticfiles', 'rest_framework', 'django_ask_ai', 'corsheaders', 'channels']:
+            # ✅ ONLY read these 4 apps to save tokens
+            apps_to_read = ['accounts', 'courses', 'exams', 'payments']
+            
+            for app_name in apps_to_read:
+                try:
+                    app_config = apps.get_app_config(app_name)
+                except LookupError:
                     continue
 
                 for model in app_config.get_models():
-                    # Skip sensitive models
                     if model.__name__ in ['PasswordResetOTP', 'SystemLog', 'StudentPaymentSchedule', 'AskLog']:
                         continue
                         
                     try:
-                        # ✅ REDUCED FROM 200 TO 5 TO PREVENT 413 TOKEN LIMIT ERROR
-                        records = model.objects.all()[:5] 
+                        # ✅ ONLY 2 RECORDS PER TABLE
+                        records = model.objects.all()[:2] 
                         if not records.exists():
                             continue
                     except Exception as e:
-                        print(f"Skipping model {model.__name__} due to DB error: {e}")
                         continue
 
                     context += f"\n--- TABLE: {model.__name__.upper()} ---\n"
@@ -3695,13 +3697,11 @@ class AIAssistantView(APIView):
                         data_dict = {}
                         for field in obj._meta.fields:
                             field_name = field.name
-                            if field_name in ['password', 'face_embedding', 'face_reference_image', 'face_verification_history']:
+                            if field_name in ['password', 'face_embedding', 'face_reference_image']:
                                 continue 
-                            
                             value = getattr(obj, field_name)
                             if value is not None:
                                 data_dict[field_name] = str(value)
-                        
                         context += f"{json.dumps(data_dict)}\n"
 
             payload = {
@@ -3711,7 +3711,7 @@ class AIAssistantView(APIView):
                     {"role": "user", "content": question}
                 ],
                 "temperature": 0.0,
-                "max_tokens": 500  # ✅ LIMIT RESPONSE LENGTH TO SAVE TOKENS
+                "max_tokens": 200  # ✅ RESERVE ONLY 200 TOKENS FOR THE ANSWER
             }
 
             headers = {
@@ -3738,5 +3738,4 @@ class AIAssistantView(APIView):
             return Response({'answer': answer})
 
         except Exception as e:
-            return Response({'error': str(e)}, status=500)       
-
+            return Response({'error': str(e)}, status=500)
