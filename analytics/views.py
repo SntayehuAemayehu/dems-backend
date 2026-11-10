@@ -3648,15 +3648,6 @@ class BatchExportView(APIView):
         )
         response['Content-Disposition'] = f'attachment; filename="{resource_type}_export.csv"'
         return response 
-
-import json
-from curl_cffi import requests as curl_requests
-from django.conf import settings
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import permissions
-from django.apps import apps
-
 import json
 from curl_cffi import requests as curl_requests
 from django.conf import settings
@@ -3681,16 +3672,18 @@ class AIAssistantView(APIView):
             )
             
             for app_config in apps.get_app_configs():
+                # Skip Django internal apps
                 if app_config.name in ['admin', 'auth', 'contenttypes', 'sessions', 'messages', 'staticfiles', 'rest_framework', 'django_ask_ai', 'corsheaders', 'channels']:
                     continue
 
                 for model in app_config.get_models():
+                    # Skip sensitive models
                     if model.__name__ in ['PasswordResetOTP', 'SystemLog', 'StudentPaymentSchedule', 'AskLog']:
                         continue
                         
-                    # ✅ SAFETY CHECK: Try to read the table, if it fails (e.g. missing table), skip it.
                     try:
-                        records = model.objects.all()[:200] 
+                        # ✅ REDUCED FROM 200 TO 5 TO PREVENT 413 TOKEN LIMIT ERROR
+                        records = model.objects.all()[:5] 
                         if not records.exists():
                             continue
                     except Exception as e:
@@ -3717,7 +3710,8 @@ class AIAssistantView(APIView):
                     {"role": "system", "content": context},
                     {"role": "user", "content": question}
                 ],
-                "temperature": 0.0
+                "temperature": 0.0,
+                "max_tokens": 500  # ✅ LIMIT RESPONSE LENGTH TO SAVE TOKENS
             }
 
             headers = {
@@ -3744,4 +3738,5 @@ class AIAssistantView(APIView):
             return Response({'answer': answer})
 
         except Exception as e:
-            return Response({'error': str(e)}, status=500)
+            return Response({'error': str(e)}, status=500)       
+
