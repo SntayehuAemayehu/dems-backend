@@ -53,6 +53,7 @@ def build_seb_config(exam):
     startURL points to backend entry endpoint (SEB verifies here, then redirects).
     """
     base = settings.SEB_BASE_URL.rstrip('/')
+    frontend = settings.FRONTEND_URL.rstrip('/')
     entry_url = f"{base}/api/exams/{exam.id}/seb-entry/"
 
     config = {
@@ -73,9 +74,9 @@ def build_seb_config(exam):
         "browserWindowAllowReload": False,
         "URLFilterEnable": True,
         "URLFilterRules": [
-            {"active": True, "expression": base, "action": 1},
-            {"active": True, "expression": "about:blank", "action": 1},
-            {"active": True, "expression": "*", "action": 0},  # block all else
+            {"active": True, "expression": "dems-backend-0dxk.onrender.com", "action": 1},
+            {"active": True, "expression": "dems-frontend.onrender.com", "action": 1},
+            {"active": True, "expression": "*", "action": 0}, 
         ],
         "examSessionClearCookiesOnStart": True,
         "examSessionClearCookiesOnEnd": True,
