@@ -54,10 +54,11 @@ def build_seb_config(exam):
     """
     base = settings.SEB_BASE_URL.rstrip('/')
     frontend = settings.FRONTEND_URL.rstrip('/')
-    entry_url = f"{base}/api/exams/{exam.id}/seb-entry/"
+    # entry_url = f"{base}/api/exams/{exam.id}/seb-entry/"
+    start_url = f"{frontend}/exams/{exam.id}/start" 
 
     config = {
-        "startURL": entry_url,
+        "startURL": start_url,
         "sendBrowserExamKey": True,
         "allowQuit": True,
         "allowSwitchToApplications": False,
