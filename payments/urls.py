@@ -17,11 +17,7 @@ urlpatterns = [
     path('qr/generate/', views.GeneratePaymentQRView.as_view(), name='generate-qr'),
     path('qr/image/', views.GeneratePaymentQRView.as_view(), name='qr-image'),
     
-    # ============ SIMULATE PAYMENT ============
-    path('simulate/', views.SimulatePaymentView.as_view(), name='simulate-payment'),
-    # ============ WEBHOOKS ============
     path('webhook/chapa/', views.chapa_webhook, name='chapa-webhook'),
-    path('webhook/stripe/', views.stripe_webhook, name='stripe-webhook'),
     
     # ============ PROOF UPLOAD ============
     path('proofs/upload/', views.PaymentProofUploadView.as_view(), name='upload-proof'),

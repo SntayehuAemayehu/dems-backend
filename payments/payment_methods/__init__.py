@@ -2,18 +2,13 @@
 
 from .bank_transfer import BankTransferMethod
 from .telebirr import TelebirrMethod
-from .chapa import ChapaMethod
-from .stripe import StripeMethod
-from .simulate import SimulateMethod
-
 def get_all_payment_methods():
     """Get all registered payment methods"""
     return [
         BankTransferMethod(),
         TelebirrMethod(),
         ChapaMethod(),
-        StripeMethod(),
-        SimulateMethod()
+
     ]
 
 def get_payment_method(method_id):
@@ -28,8 +23,6 @@ __all__ = [
     'BankTransferMethod',
     'TelebirrMethod',
     'ChapaMethod',
-    'StripeMethod',
-    'SimulateMethod',
     'get_all_payment_methods',
     'get_payment_method'
 ]

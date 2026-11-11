@@ -37,7 +37,6 @@ from django.http import JsonResponse
 import json
 logger = logging.getLogger(__name__)
 
-
 def payment_submission_block_reason(student):
     """Return why another proof cannot be submitted, or None when eligible."""
     if PaymentProof.objects.filter(student=student, status='PENDING').exists():
@@ -68,52 +67,6 @@ class PaymentEligibilityView(APIView):
         return Response({'can_submit': reason is None, 'reason': reason or ''})
 
 
-# payments/views.py - COMPLETE WITH ALL METHODS
-# payments/views.py - ADD WEBHOOK HANDLERS
-# payments/views.py - ADD SIMULATE PAYMENT VIEW
-
-class SimulatePaymentView(APIView):
-    """Simulate payment (Demo/Test mode)"""
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def post(self, request):
-        try:
-            student = StudentProfile.objects.get(user=request.user)
-        except StudentProfile.DoesNotExist:
-            return Response({'error': 'Student profile not found'}, status=404)
-        
-        amount = request.data.get('amount', 1000)
-        method_id = request.data.get('method', 'simulate')
-        
-        # Get simulate method
-        method = get_payment_method('simulate')
-        if not method:
-            return Response({'error': 'Simulate method not found'}, status=400)
-        
-        # Initialize simulate payment
-        result = method.initialize_payment(student, amount, **request.data)
-        
-        if result.get('success'):
-            # Auto-verify the payment
-            verify_result = method.verify_payment(result.get('reference'))
-            
-            return Response({
-                'success': True,
-                'message': '✅ Payment simulated successfully!',
-                'reference': result.get('reference'),
-                'amount': amount,
-                'method': 'Demo Payment',
-                'verified': True,
-                'transaction_id': result.get('transaction_id')
-            })
-        else:
-            return Response({
-                'success': False,
-                'error': result.get('error', 'Simulation failed'),
-                'message': result.get('message', '')
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-
 @csrf_exempt
 def chapa_webhook(request):
     """Handle Chapa webhook — re-verify with Chapa's API for security"""
@@ -126,7 +79,6 @@ def chapa_webhook(request):
         if not tx_ref:
             return JsonResponse({'status': 'error', 'message': 'No tx_ref'}, status=400)
 
-        # Verify with Chapa — never trust webhook body alone
         from .payment_methods import get_payment_method
         chapa = get_payment_method('chapa')
         result = chapa.verify_payment(tx_ref)
@@ -135,59 +87,7 @@ def chapa_webhook(request):
     except Exception as e:
         logger.error(f"Chapa webhook error: {e}")
         return JsonResponse({'status': 'error', 'message': str(e)}, status=400)
-@csrf_exempt
-def stripe_webhook(request):
-    """Handle Stripe webhook callbacks"""
-    if request.method == 'POST':
-        try:
-            payload = request.body
-            sig_header = request.META.get('HTTP_STRIPE_SIGNATURE')
-            
-            # Verify webhook signature (optional but recommended)
-            # webhook_secret = settings.STRIPE_WEBHOOK_SECRET
-            # event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
-            
-            data = json.loads(payload)
-            event_type = data.get('type')
-            
-            if event_type == 'payment_intent.succeeded':
-                payment_intent = data.get('data', {}).get('object', {})
-                metadata = payment_intent.get('metadata', {})
-                reference = metadata.get('reference')
-                
-                if reference:
-                    try:
-                        transaction = PaymentTransaction.objects.get(tx_ref=reference)
-                        transaction.status = 'PAID'
-                        transaction.save()
-                        
-                        # Create payment proof
-                        PaymentProof.objects.create(
-                            student=transaction.student,
-                            transaction_id=reference,
-                            amount=transaction.amount,
-                            bank_name='Stripe Payment',
-                            transaction_date=timezone.now().date(),
-                            status='VERIFIED',
-                            verified_at=timezone.now(),
-                            payment_type='SEMESTER'
-                        )
-                        
-                        # Update student payment status
-                        student = transaction.student
-                        student.payment_status = 'VERIFIED'
-                        student.save()
-                        
-                        return JsonResponse({'status': 'success'}, status=200)
-                    except PaymentTransaction.DoesNotExist:
-                        return JsonResponse({'status': 'error', 'message': 'Transaction not found'}, status=404)
-            
-            return JsonResponse({'status': 'success'}, status=200)
-        except Exception as e:
-            return JsonResponse({'status': 'error', 'message': str(e)}, status=400)
-    
-    return JsonResponse({'status': 'error', 'message': 'Invalid request'}, status=400)
-# payments/views.py - ADD QR CODE VIEW
+
 
 
 
@@ -356,18 +256,13 @@ class PaymentMethodsListView(APIView):
             return Response(data)
         except Exception as e:
             logger.error(f"Error fetching payment methods: {e}")
-            # Return default methods if there's an error
+            # Only the 3 allowed methods
             default_methods = [
                 {'id': 'bank_transfer', 'name': 'Bank Transfer', 'icon': '🏦', 'enabled': True},
                 {'id': 'telebirr', 'name': 'Telebirr', 'icon': '📱', 'enabled': True},
                 {'id': 'chapa', 'name': 'Chapa', 'icon': '💳', 'enabled': True},
-                {'id': 'stripe', 'name': 'Stripe', 'icon': '💳', 'enabled': True},
-                {'id': 'simulate', 'name': 'Demo Payment', 'icon': '🧪', 'enabled': True},
             ]
             return Response(default_methods)
-
-
-# payments/views.py - FIX PaymentInitializeView
 
 class PaymentInitializeView(APIView):
     """Initialize payment with selected method"""
