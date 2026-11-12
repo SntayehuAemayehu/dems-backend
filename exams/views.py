@@ -2638,12 +2638,7 @@ class CourseProctoringImagesView(APIView):
         })
 
 class SEBEntryView(APIView):
-    """
-    GET /api/exams/<exam_id>/seb-entry/
-    SEB opens this URL from the .seb startURL.
-    Verifies ConfigKeyHash header, creates SEBSession, redirects to React.
-    """
-    permission_classes = []  # No JWT — SEB opens this before React loads
+    permission_classes = []  
     authentication_classes = []
 
     def get(self, request, exam_id):
@@ -2652,26 +2647,18 @@ class SEBEntryView(APIView):
         except Exam.DoesNotExist:
             return Response({'error': 'Exam not available via SEB'}, status=status.HTTP_404_NOT_FOUND)
 
-        # Verify SEB header
         received_hash = request.headers.get('X-SafeExamBrowser-ConfigKeyHash', '')
         absolute_url = request.build_absolute_uri()
 
-        # ✅ ADDED LOGGING FOR DEBUGGING
         logger.info(f"SEB URL seen by backend: {absolute_url}")
         logger.info(f"SEB key stored: {exam.seb_config_key}")
         logger.info(f"SEB hash received: {received_hash}")
 
         # ✅ TEMPORARILY DISABLED FOR TESTING
         # if not verify_config_key_hash(absolute_url, exam.seb_config_key, received_hash):
-        #     logger.warning(f"SEB ConfigKeyHash mismatch for exam {exam.id}: {received_hash[:16]}...")
-        #     return Response(
-        #         {'error': 'Safe Exam Browser verification failed. Please ensure you opened the correct .seb file.'},
-        #         status=status.HTTP_403_FORBIDDEN
-        #     )
+        #     return Response({'error': 'Safe Exam Browser verification failed.'}, status=status.HTTP_403_FORBIDDEN)
 
-        # Must be authenticated (student logged in within SEB)
         if not request.user or not request.user.is_authenticated:
-            # SEB opens without cookie initially — redirect to React login first
             frontend = getattr(django_settings, 'FRONTEND_URL', 'http://localhost:3000').rstrip('/')
             return redirect(f"{frontend}/login?seb_return=/exams/{exam.id}/start")
 
@@ -2680,7 +2667,6 @@ class SEBEntryView(APIView):
         except StudentProfile.DoesNotExist:
             return Response({'error': 'Student profile not found'}, status=status.HTTP_403_FORBIDDEN)
 
-        # Create short-lived session
         from datetime import timedelta
         session = SEBSession.objects.create(
             student=student,
@@ -2690,15 +2676,9 @@ class SEBEntryView(APIView):
 
         frontend = getattr(django_settings, 'FRONTEND_URL', 'http://localhost:3000').rstrip('/')
         response = redirect(f"{frontend}/exams/{exam.id}/start")
-        # HttpOnly cookie scoped to this exam's API path
         response.set_cookie(
-            'seb_session_id',
-            str(session.id),
-            max_age=120,
-            httponly=True,
-            secure=not django_settings.DEBUG,
-            samesite='Lax',
-            path=f'/api/exams/{exam.id}/',
+            'seb_session_id', str(session.id), max_age=120, httponly=True,
+            secure=not django_settings.DEBUG, samesite='Lax', path=f'/api/exams/{exam.id}/',
         )
         return response
 
