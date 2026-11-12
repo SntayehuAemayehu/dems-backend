@@ -73,7 +73,7 @@ def build_seb_config(exam):
         "showInputLanguage": False,
         "allowBrowsingBackForward": False,
         "browserWindowAllowReload": False,
-        "URLFilterEnable": False,
+        "URLFilterEnable": True,
         "URLFilterRules": [
             # ✅ Fixed capitalization (Active, Expression, Action)
             {"Active": True, "Expression": base, "Action": 1},
