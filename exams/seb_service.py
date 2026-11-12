@@ -51,8 +51,8 @@ def build_seb_config(exam):
         "browserWindowAllowReload": False,
         "URLFilterEnable": True,
         "URLFilterRules": [
-            {"active": True, "expression": "*dems-backend-0dxk.onrender.com*", "action": 1},
-            {"active": True, "expression": "*dems-frontend.onrender.com*", "action": 1},
+            {"active": True, "expression": "dems-backend-0dxk.onrender.com", "action": 1},
+            {"active": True, "expression": "dems-frontend.onrender.com", "action": 1},
             {"active": True, "expression": "*", "action": 0},
         ],
         "examSessionClearCookiesOnStart": True,
