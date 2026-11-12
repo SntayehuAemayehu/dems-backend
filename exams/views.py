@@ -355,26 +355,26 @@ class StartExamView(APIView):
         if not exam.is_published:
             return Response({'error': 'Exam is not published'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ✅ SEB gate: if SEB enabled, require valid server-side session
-        if exam.seb_enabled:
-            session_id = request.COOKIES.get('seb_session_id')
-            if not session_id:
-                return Response(
-                    {'error': 'This exam requires Safe Exam Browser. Please open the .seb file.'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-            try:
-                seb_session = SEBSession.objects.get(id=session_id, exam=exam)
-            except (SEBSession.DoesNotExist, ValueError):
-                return Response(
-                    {'error': 'Invalid SEB session. Please reopen the .seb file.'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-            if not seb_session.is_valid():
-                return Response(
-                    {'error': 'SEB session expired. Please reopen the .seb file.'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
+        # ✅ TEMPORARILY DISABLED FOR HOMEPAGE FLOW TESTING
+        # if exam.seb_enabled:
+        #     session_id = request.COOKIES.get('seb_session_id')
+        #     if not session_id:
+        #         return Response(
+        #             {'error': 'This exam requires Safe Exam Browser. Please open the .seb file.'},
+        #             status=status.HTTP_403_FORBIDDEN
+        #         )
+        #     try:
+        #         seb_session = SEBSession.objects.get(id=session_id, exam=exam)
+        #     except (SEBSession.DoesNotExist, ValueError):
+        #         return Response(
+        #             {'error': 'Invalid SEB session. Please reopen the .seb file.'},
+        #             status=status.HTTP_403_FORBIDDEN
+        #         )
+        #     if not seb_session.is_valid():
+        #         return Response(
+        #             {'error': 'SEB session expired. Please reopen the .seb file.'},
+        #             status=status.HTTP_403_FORBIDDEN
+        #         )
 
         now = timezone.now()
         if now < exam.start_time:
@@ -387,13 +387,13 @@ class StartExamView(APIView):
         except StudentProfile.DoesNotExist:
             return Response({'error': 'Student profile not found'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ✅ Bind SEB session to this student
-        if exam.seb_enabled:
-            if seb_session.student_id != student.id:
-                return Response(
-                    {'error': 'SEB session does not belong to this student.'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
+        # ✅ TEMPORARILY DISABLED FOR HOMEPAGE FLOW TESTING
+        # if exam.seb_enabled:
+        #     if seb_session.student_id != student.id:
+        #         return Response(
+        #             {'error': 'SEB session does not belong to this student.'},
+        #             status=status.HTTP_403_FORBIDDEN
+        #         )
 
         if not Enrollment.objects.filter(
             student=student,
@@ -416,11 +416,11 @@ class StartExamView(APIView):
             end_time=timezone.now() + timezone.timedelta(minutes=exam.duration_minutes)
         )
 
-        # ✅ Mark SEB session used and bind to attempt
-        if exam.seb_enabled:
-            seb_session.used = True
-            seb_session.attempt = attempt
-            seb_session.save(update_fields=['used', 'attempt'])
+        # ✅ TEMPORARILY DISABLED FOR HOMEPAGE FLOW TESTING
+        # if exam.seb_enabled:
+        #     seb_session.used = True
+        #     seb_session.attempt = attempt
+        #     seb_session.save(update_fields=['used', 'attempt'])
 
         response = Response({
             'attempt_id': attempt.id,
@@ -429,7 +429,7 @@ class StartExamView(APIView):
             'end_time': attempt.end_time
         })
         # Clear the cookie (single-use)
-        response.delete_cookie('seb_session_id', path=f'/api/exams/{exam.id}/')
+        # response.delete_cookie('seb_session_id', path=f'/api/exams/{exam.id}/')
         return response
 
 
