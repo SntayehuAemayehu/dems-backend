@@ -17,6 +17,7 @@ class ExamSerializer(serializers.ModelSerializer):
     attempt_count = serializers.SerializerMethodField()
     is_taken = serializers.SerializerMethodField()
     seb_available = serializers.SerializerMethodField()
+    seb_file_url = serializers.SerializerMethodField()  # ✅ NEW
 
     class Meta:
         model = Exam
@@ -65,6 +66,19 @@ class ExamSerializer(serializers.ModelSerializer):
             return bool(obj.seb_enabled and obj.seb_config_file and obj.seb_config_file.name)
         except Exception:
             return False
+
+    # ✅ NEW METHOD
+    def get_seb_file_url(self, obj):
+        try:
+            if obj.seb_config_file and obj.seb_config_file.name:
+                request = self.context.get('request')
+                url = obj.seb_config_file.url
+                if request is not None:
+                    return request.build_absolute_uri(url)
+                return url
+        except Exception:
+            pass
+        return None
 
 
 class ExamAttemptSerializer(serializers.ModelSerializer):

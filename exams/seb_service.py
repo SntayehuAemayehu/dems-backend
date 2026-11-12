@@ -54,11 +54,12 @@ def build_seb_config(exam):
     """
     base = settings.SEB_BASE_URL.rstrip('/')
     frontend = settings.FRONTEND_URL.rstrip('/')
-    # entry_url = f"{base}/api/exams/{exam.id}/seb-entry/"
-    start_url = f"{frontend}/exams/{exam.id}/start" 
+    
+    # ✅ Use backend entry URL so SEB verification works
+    entry_url = f"{base}/api/exams/{exam.id}/seb-entry/"
 
     config = {
-        "startURL": start_url,
+        "startURL": entry_url,  # ✅ Reverted to backend entry point
         "sendBrowserExamKey": True,
         "allowQuit": True,
         "allowSwitchToApplications": False,
@@ -70,18 +71,17 @@ def build_seb_config(exam):
         "showReloadButton": False,
         "showTime": True,
         "showInputLanguage": False,
-        "sendBrowserExamKey": True,
         "allowBrowsingBackForward": False,
         "browserWindowAllowReload": False,
         "URLFilterEnable": True,
         "URLFilterRules": [
-            {"active": True, "expression": "dems-backend-0dxk.onrender.com", "action": 1},
-            {"active": True, "expression": "dems-frontend.onrender.com", "action": 1},
-            {"active": True, "expression": "*", "action": 0}, 
+            # ✅ Fixed capitalization (Active, Expression, Action)
+            {"Active": True, "Expression": base, "Action": 1},
+            {"Active": True, "Expression": frontend, "Action": 1},
+            {"Active": True, "Expression": "*", "Action": 0},
         ],
         "examSessionClearCookiesOnStart": True,
         "examSessionClearCookiesOnEnd": True,
-        # SEB 3.x quit URL (optional)
         "quitURL": f"{base}/api/exams/{exam.id}/seb-quit/",
     }
     return config
