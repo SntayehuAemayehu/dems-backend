@@ -51,10 +51,9 @@ def build_seb_config(exam):
         "browserWindowAllowReload": False,
         "URLFilterEnable": True,
         "URLFilterRules": [
-            # ✅ Fixed Regex wildcard for the block rule
-            {"active": True, "expression": base, "action": 1},
-            {"active": True, "expression": frontend, "action": 1},
-            {"active": True, "expression": ".*", "action": 0},  # Changed from "*"
+            {"active": True, "expression": "*dems-backend-0dxk.onrender.com*", "action": 1},
+            {"active": True, "expression": "*dems-frontend.onrender.com*", "action": 1},
+            {"active": True, "expression": "*", "action": 0},
         ],
         "examSessionClearCookiesOnStart": True,
         "examSessionClearCookiesOnEnd": True,
