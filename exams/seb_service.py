@@ -75,10 +75,10 @@ def build_seb_config(exam):
         "browserWindowAllowReload": False,
         "URLFilterEnable": True,
         "URLFilterRules": [
-            # ✅ Fixed capitalization (Active, Expression, Action)
-            {"Active": True, "Expression": base, "Action": 1},
-            {"Active": True, "Expression": frontend, "Action": 1},
-            {"Active": True, "Expression": "*", "Action": 0},
+            # ✅ Fixed capitalization (all lowercase)
+            {"active": True, "expression": base, "action": 1},
+            {"active": True, "expression": frontend, "action": 1},
+            {"active": True, "expression": "*", "action": 0},
         ],
         "examSessionClearCookiesOnStart": True,
         "examSessionClearCookiesOnEnd": True,
