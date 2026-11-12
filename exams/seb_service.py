@@ -62,10 +62,10 @@ def build_seb_config(exam):
         "allowBrowsingBackForward": False,
         "browserWindowAllowReload": False,
         "URLFilterEnable": True,
+        # SEB evaluates block rules first; its default already blocks unmatched URLs.
         "URLFilterRules": [
             _url_filter_rule(base),
             _url_filter_rule(frontend),
-            {"active": True, "expression": ".*", "action": 0},
         ],
         "examSessionClearCookiesOnStart": True,
         "examSessionClearCookiesOnEnd": True,

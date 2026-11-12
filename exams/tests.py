@@ -520,6 +520,8 @@ class SEBConfigTests(SimpleTestCase):
         for rule in rules:
             re.compile(rule['expression'])
 
+        self.assertEqual(len(rules), 2)
+        self.assertTrue(all(rule['action'] == 1 for rule in rules))
         self.assertRegex(
             'https://dems-backend-0dxk.onrender.com/api/exams/42/seb-entry/',
             rules[0]['expression'],
@@ -528,7 +530,6 @@ class SEBConfigTests(SimpleTestCase):
             'https://dems-frontend.onrender.com/exams/42/start',
             rules[1]['expression'],
         )
-        self.assertEqual(rules[2]['expression'], '.*')
 
     def test_existing_exam_launch_url_uses_config_endpoint(self):
         request = APIRequestFactory().get('/api/exams/42/')
