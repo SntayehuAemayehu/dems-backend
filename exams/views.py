@@ -2656,6 +2656,11 @@ class SEBEntryView(APIView):
         received_hash = request.headers.get('X-SafeExamBrowser-ConfigKeyHash', '')
         absolute_url = request.build_absolute_uri()
 
+        # ✅ ADDED LOGGING FOR DEBUGGING
+        logger.info(f"SEB URL seen by backend: {absolute_url}")
+        logger.info(f"SEB key stored: {exam.seb_config_key}")
+        logger.info(f"SEB hash received: {received_hash}")
+
         if not verify_config_key_hash(absolute_url, exam.seb_config_key, received_hash):
             logger.warning(f"SEB ConfigKeyHash mismatch for exam {exam.id}: {received_hash[:16]}...")
             return Response(
