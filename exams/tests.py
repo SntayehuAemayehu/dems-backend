@@ -1,15 +1,19 @@
 import json
+import re
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock, patch
 
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
-from rest_framework.test import APIClient
+from rest_framework.test import APIClient, APIRequestFactory
 
 from accounts.models import Department, StudentProfile, TeacherProfile, User
 from courses.models import Course, Enrollment
 from exams.models import Exam, ExamAttempt, ExaminerAssignment, Question
+from exams.serializers import ExamSerializer
+from exams.seb_service import build_seb_config
+from exams.views import SEBDownloadView
 from exams.consumers import ExamProctorConsumer
 from proctoring.models import ProctorImage
 
@@ -502,3 +506,60 @@ class StartExamProctorImageTests(TestCase):
 
         start_response = self.client.post(f'/api/exams/{self.exam.id}/start/')
         self.assertEqual(start_response.status_code, 200)
+
+
+class SEBConfigTests(SimpleTestCase):
+    @override_settings(
+        SEB_BASE_URL='https://dems-backend-0dxk.onrender.com',
+        FRONTEND_URL='https://dems-frontend.onrender.com',
+    )
+    def test_url_filter_rules_are_valid_and_allow_application_hosts(self):
+        config = build_seb_config(SimpleNamespace(id=42))
+        rules = config['URLFilterRules']
+
+        for rule in rules:
+            re.compile(rule['expression'])
+
+        self.assertEqual(len(rules), 2)
+        self.assertTrue(all(rule['action'] == 1 for rule in rules))
+        self.assertRegex(
+            'https://dems-backend-0dxk.onrender.com/api/exams/42/seb-entry/',
+            rules[0]['expression'],
+        )
+        self.assertRegex(
+            'https://dems-frontend.onrender.com/exams/42/start',
+            rules[1]['expression'],
+        )
+
+    def test_existing_exam_launch_url_uses_config_endpoint(self):
+        request = APIRequestFactory().get('/api/exams/42/')
+        exam = SimpleNamespace(
+            id=42,
+            seb_config_file=SimpleNamespace(name='old-config.seb'),
+        )
+
+        url = ExamSerializer(context={'request': request}).get_seb_file_url(exam)
+
+        self.assertEqual(url, 'http://testserver/api/exams/42/seb-config/')
+
+    def test_seb_download_generates_current_config_instead_of_serving_saved_file(self):
+        exam = SimpleNamespace(
+            id=42,
+            seb_config_file=SimpleNamespace(name='old-config.seb'),
+            end_time=timezone.now() + timezone.timedelta(minutes=1),
+            seb_config_key='old-key',
+            seb_generated_at=None,
+            save=Mock(),
+        )
+        request = APIRequestFactory().get('/api/exams/42/seb-config/')
+
+        with (
+            patch('exams.views.Exam.objects.get', return_value=exam),
+            patch('exams.views.generate_seb_file', return_value=('new-key', b'fresh-config')),
+        ):
+            response = SEBDownloadView.as_view()(request, exam_id=42)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b'fresh-config')
+        self.assertEqual(exam.seb_config_key, 'new-key')
+        exam.save.assert_called_once_with(update_fields=['seb_config_key', 'seb_generated_at'])

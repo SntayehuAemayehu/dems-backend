@@ -27,6 +27,7 @@ from django.urls import reverse
 from django.conf import settings as django_settings
 from .seb_service import (
     generate_and_save,
+    generate_seb_file,
     verify_config_key_hash,
 )
 from .models import SEBSession  # add SEBSession to existing model import
@@ -2682,7 +2683,18 @@ class SEBEntryView(APIView):
         )
         return response
 class SEBDownloadView(APIView):
+<<<<<<< HEAD
     permission_classes = []
+=======
+    """
+    GET /api/exams/<exam_id>/seb-config/
+    Generates the current .seb config so the OS can hand it to Safe Exam Browser.
+    This endpoint is intentionally public — the .seb file contains only browser
+    settings and the startURL; it has no exam questions or student data.
+    The response is inline so the seb:// URL scheme can open it directly.
+    """
+    permission_classes = []   # Public — SEB fetches this before the student logs in
+>>>>>>> 2bdbba995df676f9d1c38634dd7eb70fa7360f0c
     authentication_classes = []
 
     def get(self, request, exam_id):
@@ -2701,6 +2713,22 @@ class SEBDownloadView(APIView):
                 logger.error(f"Failed to generate SEB on the fly: {e}")
                 return Response({'error': 'Could not generate SEB file'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+<<<<<<< HEAD
         # ✅ CLOUDINARY FIX: Redirect directly to the cloud URL
         from django.shortcuts import redirect
         return redirect(exam.seb_config_file.url)
+=======
+        now = timezone.now()
+        if now > exam.end_time:
+            return Response({'error': 'Exam has ended'}, status=status.HTTP_400_BAD_REQUEST)
+
+        config_key, file_bytes = generate_seb_file(exam)
+        exam.seb_config_key = config_key
+        exam.seb_generated_at = now
+        exam.save(update_fields=['seb_config_key', 'seb_generated_at'])
+
+        from django.http import HttpResponse
+        response = HttpResponse(file_bytes, content_type='application/seb')
+        response['Content-Disposition'] = f'inline; filename="exam_{exam.id}.seb"'
+        return response
+>>>>>>> 2bdbba995df676f9d1c38634dd7eb70fa7360f0c
