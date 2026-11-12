@@ -368,6 +368,9 @@ ASK_AI = {
 # ================================================================
 # CLOUDINARY CONFIGURATION
 # ================================================================
+# ================================================================
+# CLOUDINARY CONFIGURATION (FIXED FOR DJANGO 6.0)
+# ================================================================
 import cloudinary
 import cloudinary.uploader
 import cloudinary.api
@@ -377,13 +380,9 @@ CLOUDINARY_STORAGE = {
     'API_KEY': config('CLOUDINARY_API_KEY', default=''),
     'API_SECRET': config('CLOUDINARY_API_SECRET', default=''),
 }
-STORAGES = {
-    "default": {
-        "BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage",
-    },
-    "staticfiles": {
-        # Change from CompressedManifestStaticFilesStorage to CompressedStaticFilesStorage
-        "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
-    },
-}
 
+# ✅ This is the setting django-cloudinary-storage actually looks for!
+DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
+
+# Keep static files working for Whitenoise
+STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.StaticFilesStorage'
