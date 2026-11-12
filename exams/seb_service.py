@@ -80,12 +80,17 @@ def generate_seb_file(exam):
     plistlib.dump(config, buffer, fmt=plistlib.FMT_XML)
     return config_key, buffer.getvalue()
 
+# exams/seb_service.py
+
 def generate_and_save(exam):
     if not getattr(settings, 'SEB_ENABLED', False):
         return None
     config_key, file_bytes = generate_seb_file(exam)
     filename = f"exam_{exam.id}_seb.seb"
+    
+    # ✅ Save to whatever storage the model dictates (now Cloudinary)
     exam.seb_config_file.save(filename, ContentFile(file_bytes), save=False)
+    
     exam.seb_config_key = config_key
     exam.seb_generated_at = timezone.now()
     exam.seb_enabled = True
