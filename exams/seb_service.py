@@ -56,10 +56,10 @@ def build_seb_config(exam):
     frontend = settings.FRONTEND_URL.rstrip('/')
     
     # ✅ Use backend entry URL so SEB verification works
-    entry_url = f"{base}/api/exams/{exam.id}/seb-entry/"
+    start_url = f"{frontend}/exams/{exam.id}/start"
 
     config = {
-        "startURL": entry_url,  # ✅ Reverted to backend entry point
+        "startURL": start_url,  
         "sendBrowserExamKey": True,
         "allowQuit": True,
         "allowSwitchToApplications": False,
