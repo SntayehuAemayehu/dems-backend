@@ -99,12 +99,16 @@ DATABASES = {
 # ================================================================
 # CHANNEL LAYERS (Redis on Render, In-Memory Locally)
 # ================================================================
-if not DEBUG:
-    # Production (Render) - We won't use Redis to save memory on Free Tier.
-    # We will use InMemory, but note: this means WebSockets won't work across multiple instances.
+REDIS_URL = os.environ.get("REDIS_URL")
+
+if REDIS_URL:
+    # Live Development / Production (Render + Upstash)
     CHANNEL_LAYERS = {
         'default': {
-            'BACKEND': 'channels.layers.InMemoryChannelLayer',
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {
+                "hosts": [REDIS_URL],
+            },
         },
     }
 else:

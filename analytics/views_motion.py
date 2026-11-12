@@ -32,7 +32,7 @@ class LivePulseView(APIView):
                 status='IN_PROGRESS',
             ).count(),
             'submissions_today': ExamAttempt.objects.filter(
-                submitted_at__gte=now - timedelta(hours=24),
+              end_time__gte=now - timedelta(hours=24),  # <--- Change submitted_at to end_time
             ).count(),
             'payments_last_hour': PaymentProof.objects.filter(
                 uploaded_at__gte=now - timedelta(hours=1),
