@@ -51,9 +51,10 @@ def build_seb_config(exam):
         "browserWindowAllowReload": False,
         "URLFilterEnable": True,
         "URLFilterRules": [
+            # ✅ Fixed Regex wildcard for the block rule
             {"active": True, "expression": base, "action": 1},
             {"active": True, "expression": frontend, "action": 1},
-            {"active": True, "expression": "*", "action": 0},
+            {"active": True, "expression": ".*", "action": 0},  # Changed from "*"
         ],
         "examSessionClearCookiesOnStart": True,
         "examSessionClearCookiesOnEnd": True,
