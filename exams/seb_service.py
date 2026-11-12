@@ -56,7 +56,7 @@ def build_seb_config(exam):
     frontend = settings.FRONTEND_URL.rstrip('/')
     
     # ✅ Use backend entry URL so SEB verification works
-    start_url = f"{frontend}/exams/{exam.id}/start"
+    start_url = f"{frontend}/"
 
     config = {
         "startURL": start_url,  
