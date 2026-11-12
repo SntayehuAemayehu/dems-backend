@@ -2679,7 +2679,7 @@ class SEBEntryView(APIView):
         response = redirect(f"{frontend}/exams/{exam.id}/start")
         response.set_cookie(
             'seb_session_id', str(session.id), max_age=120, httponly=True,
-            secure=not django_settings.DEBUG, samesite='Lax', path=f'/',
+            secure=not django_settings.DEBUG, samesite='Lax', path='/',
         )
         return response
 
