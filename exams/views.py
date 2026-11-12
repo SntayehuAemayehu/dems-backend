@@ -27,6 +27,7 @@ from django.urls import reverse
 from django.conf import settings as django_settings
 from .seb_service import (
     generate_and_save,
+    generate_seb_file,
     verify_config_key_hash,
 )
 from .models import SEBSession  # add SEBSession to existing model import
@@ -2685,12 +2686,10 @@ class SEBEntryView(APIView):
 class SEBDownloadView(APIView):
     """
     GET /api/exams/<exam_id>/seb-config/
-    Serves the .seb config file so the OS can hand it to Safe Exam Browser.
+    Generates the current .seb config so the OS can hand it to Safe Exam Browser.
     This endpoint is intentionally public — the .seb file contains only browser
-    settings and the startURL; it has no exam questions or sensitive data.
-    Real security is enforced at seb-entry (ConfigKeyHash) and start-exam
-    (seb_session_id cookie + JWT). The file is served inline (not as an
-    attachment) so the seb:// URL scheme can open SEB directly without a download.
+    settings and the startURL; it has no exam questions or student data.
+    The response is inline so the seb:// URL scheme can open it directly.
     """
     permission_classes = []   # Public — SEB fetches this before the student logs in
     authentication_classes = []
@@ -2708,14 +2707,12 @@ class SEBDownloadView(APIView):
         if now > exam.end_time:
             return Response({'error': 'Exam has ended'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Serve inline with application/seb content-type so the OS/browser
-        # hands the file directly to the Safe Exam Browser application.
-        from django.http import FileResponse
-        file_handle = exam.seb_config_file.open('rb')
-        response = FileResponse(
-            file_handle,
-            as_attachment=False,
-            filename=f"exam_{exam.id}_{exam.title.replace(' ', '_')}.seb",
-            content_type='application/seb',
-        )
+        config_key, file_bytes = generate_seb_file(exam)
+        exam.seb_config_key = config_key
+        exam.seb_generated_at = now
+        exam.save(update_fields=['seb_config_key', 'seb_generated_at'])
+
+        from django.http import HttpResponse
+        response = HttpResponse(file_bytes, content_type='application/seb')
+        response['Content-Disposition'] = f'inline; filename="exam_{exam.id}.seb"'
         return response

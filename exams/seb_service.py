@@ -2,9 +2,11 @@
 import hashlib
 import json
 import os
+import re
 import secrets
 import plistlib
 from io import BytesIO
+from urllib.parse import urlsplit
 
 from django.conf import settings
 from django.core.files.base import ContentFile
@@ -26,6 +28,16 @@ def verify_config_key_hash(absolute_url, config_key_hash, received_hash):
         (absolute_url + config_key_hash).encode('utf-8')
     ).hexdigest()
     return secrets.compare_digest(expected, received_hash)
+
+def _url_filter_rule(url):
+    parsed_url = urlsplit(url)
+    if parsed_url.scheme not in ('http', 'https') or not parsed_url.netloc:
+        raise ValueError(f"Invalid SEB URL: {url}")
+    return {
+        "active": True,
+        "expression": rf"^https?://{re.escape(parsed_url.netloc)}(?:/.*)?$",
+        "action": 1,
+    }
 
 def build_seb_config(exam):
     base = settings.SEB_BASE_URL.rstrip('/')
@@ -51,9 +63,9 @@ def build_seb_config(exam):
         "browserWindowAllowReload": False,
         "URLFilterEnable": True,
         "URLFilterRules": [
-            {"active": True, "expression": "dems-backend-0dxk.onrender.com", "action": 1},
-            {"active": True, "expression": "dems-frontend.onrender.com", "action": 1},
-            {"active": True, "expression": "*", "action": 0},
+            _url_filter_rule(base),
+            _url_filter_rule(frontend),
+            {"active": True, "expression": ".*", "action": 0},
         ],
         "examSessionClearCookiesOnStart": True,
         "examSessionClearCookiesOnEnd": True,
