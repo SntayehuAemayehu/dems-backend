@@ -2681,18 +2681,8 @@ class SEBEntryView(APIView):
             secure=not django_settings.DEBUG, samesite='Lax', path='/',
         )
         return response
-
 class SEBDownloadView(APIView):
-    """
-    GET /api/exams/<exam_id>/seb-config/
-    Serves the .seb config file so the OS can hand it to Safe Exam Browser.
-    This endpoint is intentionally public — the .seb file contains only browser
-    settings and the startURL; it has no exam questions or sensitive data.
-    Real security is enforced at seb-entry (ConfigKeyHash) and start-exam
-    (seb_session_id cookie + JWT). The file is served inline (not as an
-    attachment) so the seb:// URL scheme can open SEB directly without a download.
-    """
-    permission_classes = []   # Public — SEB fetches this before the student logs in
+    permission_classes = []
     authentication_classes = []
 
     def get(self, request, exam_id):
@@ -2701,21 +2691,16 @@ class SEBDownloadView(APIView):
         except Exam.DoesNotExist:
             return Response({'error': 'SEB config not available'}, status=status.HTTP_404_NOT_FOUND)
 
-        if not exam.seb_config_file:
-            return Response({'error': 'SEB config not generated yet'}, status=status.HTTP_404_NOT_FOUND)
+        # If file doesn't exist in Cloudinary yet, generate it
+        if not exam.seb_config_file or not exam.seb_config_file.name:
+            from .seb_service import generate_and_save
+            try:
+                generate_and_save(exam)
+                exam.refresh_from_db()
+            except Exception as e:
+                logger.error(f"Failed to generate SEB on the fly: {e}")
+                return Response({'error': 'Could not generate SEB file'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        now = timezone.now()
-        if now > exam.end_time:
-            return Response({'error': 'Exam has ended'}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Serve inline with application/seb content-type so the OS/browser
-        # hands the file directly to the Safe Exam Browser application.
-        from django.http import FileResponse
-        file_handle = exam.seb_config_file.open('rb')
-        response = FileResponse(
-            file_handle,
-            as_attachment=False,
-            filename=f"exam_{exam.id}_{exam.title.replace(' ', '_')}.seb",
-            content_type='application/seb',
-        )
-        return response
+        # ✅ CLOUDINARY FIX: Redirect directly to the cloud URL
+        from django.shortcuts import redirect
+        return redirect(exam.seb_config_file.url)

@@ -21,6 +21,8 @@ DEBUG = config('DEBUG', default=True, cast=bool)
 ALLOWED_HOSTS = ['127.0.0.1', 'localhost', '0.0.0.0', '.onrender.com', '*']
 
 INSTALLED_APPS = [
+    'cloudinary_storage', 
+    'cloudinary',
     'daphne', 
     'django.contrib.admin',
     'django.contrib.auth',
@@ -362,5 +364,26 @@ ASK_AI = {
             "MODEL": "openai/gpt-oss-20b",
             "API_KEY": config('GROQ_API_KEY', default=''),
         }
+    },
+}
+# ================================================================
+# CLOUDINARY CONFIGURATION
+# ================================================================
+import cloudinary
+import cloudinary.uploader
+import cloudinary.api
+
+CLOUDINARY_STORAGE = {
+    'CLOUD_NAME': config('CLOUDINARY_CLOUD_NAME', default=''),
+    'API_KEY': config('CLOUDINARY_API_KEY', default=''),
+    'API_SECRET': config('CLOUDINARY_API_SECRET', default=''),
+}
+
+STORAGES = {
+    "default": {
+        "BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
     },
 }

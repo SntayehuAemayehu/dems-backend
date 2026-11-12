@@ -50,3 +50,5 @@ twilio==9.3.0
 textbee
 django-ask-ai
 curl_cffi
+cloudinary==1.41.0
+django-cloudinary-storage==0.3.0
