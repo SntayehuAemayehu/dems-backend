@@ -2682,7 +2682,8 @@ class SEBEntryView(APIView):
             secure=not django_settings.DEBUG, samesite='Lax', path='/',
         )
         return response
-from django.shortcuts import redirect
+import requests
+from django.http import HttpResponse
 
 class SEBDownloadView(APIView):
     permission_classes = []
@@ -2694,7 +2695,7 @@ class SEBDownloadView(APIView):
         except Exam.DoesNotExist:
             return Response({'error': 'SEB config not available'}, status=status.HTTP_404_NOT_FOUND)
 
-        # 1. If the file doesn't exist in Cloudinary yet, generate it right now
+        # 1. Generate if missing
         if not exam.seb_config_file or not exam.seb_config_file.name:
             from .seb_service import generate_and_save
             try:
@@ -2704,5 +2705,19 @@ class SEBDownloadView(APIView):
                 logger.error(f"Failed to generate SEB on the fly: {e}")
                 return Response({'error': 'Could not generate SEB file'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # 2. Redirect the browser directly to the Cloudinary file URL
-        return redirect(exam.seb_config_file.url)
+        # 2. Fetch the file from Cloudinary
+        file_url = exam.seb_config_file.url
+        try:
+            response = requests.get(file_url, stream=True)
+            response.raise_for_status()
+        except Exception as e:
+            logger.error(f"Failed to fetch SEB from Cloudinary: {e}")
+            return Response({'error': 'Could not download SEB file'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # 3. Send the actual file content to the browser/SEB
+        django_response = HttpResponse(
+            response.content,
+            content_type='application/seb'
+        )
+        django_response['Content-Disposition'] = f'attachment; filename="exam_{exam.id}_seb.seb"'
+        return django_response
