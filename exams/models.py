@@ -4,7 +4,7 @@ from django.db import models
 from django.conf import settings
 from django.utils import timezone
 import uuid
-from cloudinary_storage.storage import MediaCloudinaryStorage
+from cloudinary_storage.storage import RawMediaCloudinaryStorage
 class Exam(AskMixin, models.Model):
     EXAM_TYPE_CHOICES = [
         ('QUIZ', 'Quiz'),
@@ -32,7 +32,7 @@ class Exam(AskMixin, models.Model):
     )
       # ✅ SEB fields
     seb_enabled = models.BooleanField(default=False)
-    seb_config_file = models.FileField(upload_to='seb_configs/', null=True, blank=True, storage=MediaCloudinaryStorage())
+    seb_config_file = models.FileField(upload_to='seb_configs/', null=True, blank=True, storage=RawMediaCloudinaryStorage())
     seb_config_key = models.CharField(max_length=64, blank=True)  # CK hash
     seb_browser_exam_key = models.CharField(max_length=64, blank=True)  # BEK (optional)
     seb_generated_at = models.DateTimeField(null=True, blank=True)
