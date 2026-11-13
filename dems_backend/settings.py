@@ -205,9 +205,18 @@ CHAPA_BASE_URL = config('CHAPA_BASE_URL', default='https://api.chapa.co/v1')
 BASE_URL = config('BASE_URL', default='http://localhost:8000')
 # URL config — used by Chapa callbacks
 BACKEND_URL = config('BACKEND_URL', default='http://localhost:8000')
-FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:3000')
+FRONTEND_URL = config(
+    'FRONTEND_URL',
+    default='http://localhost:3000' if DEBUG else 'https://dems-frontend.onrender.com',
+)
 SEB_ENABLED = config('SEB_ENABLED', default=False, cast=bool)
-SEB_BASE_URL = config('SEB_BASE_URL', default='http://localhost:8000')
+SEB_BASE_URL = config(
+    'SEB_BASE_URL',
+    default=config(
+        'BACKEND_URL',
+        default='http://localhost:8000' if DEBUG else 'https://dems-backend-0dxk.onrender.com',
+    ),
+)
 STRIPE_TEST_SECRET_KEY = config('STRIPE_TEST_SECRET_KEY', default='sk_test_xxxx')
 STRIPE_TEST_PUBLISHABLE_KEY = config('STRIPE_TEST_PUBLISHABLE_KEY', default='pk_test_xxxx')
 STRIPE_API_VERSION = '2023-10-16'
@@ -342,7 +351,6 @@ mimetypes.add_type("video/x-msvideo", ".avi", True)
 
 #chapa
 BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8000')
-FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 #AI Chat
 # ================================================================
 # DJANGO-ASK-AI CONFIGURATION

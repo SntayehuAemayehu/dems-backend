@@ -548,20 +548,24 @@ class SEBConfigTests(SimpleTestCase):
         request = APIRequestFactory().get('/api/exams/42/')
         exam = SimpleNamespace(
             id=42,
-            seb_config_file=SimpleNamespace(name='old-config.seb'),
+            is_published=True,
         )
 
-        url = ExamSerializer(context={'request': request}).get_seb_file_url(exam)
+        with override_settings(SEB_ENABLED=True):
+            serializer = ExamSerializer(context={'request': request})
+            url = serializer.get_seb_file_url(exam)
 
         self.assertEqual(url, 'http://testserver/api/exams/42/seb-config/')
 
-    def test_seb_download_generates_current_config_instead_of_serving_saved_file(self):
+    @override_settings(SEB_ENABLED=True)
+    def test_seb_download_generates_current_config_and_enables_legacy_exam(self):
         exam = SimpleNamespace(
             id=42,
             seb_config_file=SimpleNamespace(name='old-config.seb'),
             end_time=timezone.now() + timezone.timedelta(minutes=1),
             seb_config_key='old-key',
             seb_generated_at=None,
+            seb_enabled=False,
             save=Mock(),
         )
         request = APIRequestFactory().get('/api/exams/42/seb-config/')
@@ -575,4 +579,7 @@ class SEBConfigTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, b'fresh-config')
         self.assertEqual(exam.seb_config_key, 'new-key')
-        exam.save.assert_called_once_with(update_fields=['seb_config_key', 'seb_generated_at'])
+        self.assertTrue(exam.seb_enabled)
+        exam.save.assert_called_once_with(
+            update_fields=['seb_config_key', 'seb_generated_at', 'seb_enabled']
+        )

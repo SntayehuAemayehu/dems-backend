@@ -6,6 +6,7 @@ from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.utils import timezone
+from django.http import HttpResponse
 from django.db import transaction
 from .models import Exam, Question, ExamAttempt, Answer, ExamRecording, ExaminerAssignment
 from .serializers import ExamSerializer, QuestionSerializer, ExamAttemptSerializer
@@ -2682,42 +2683,30 @@ class SEBEntryView(APIView):
             secure=not django_settings.DEBUG, samesite='Lax', path='/',
         )
         return response
-import requests
-from django.http import HttpResponse
-
 class SEBDownloadView(APIView):
     permission_classes = []
     authentication_classes = []
 
     def get(self, request, exam_id):
+        if not getattr(django_settings, 'SEB_ENABLED', False):
+            return Response({'error': 'Safe Exam Browser is disabled'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
         try:
-            exam = Exam.objects.get(id=exam_id, is_published=True, seb_enabled=True)
+            exam = Exam.objects.get(id=exam_id, is_published=True)
         except Exam.DoesNotExist:
             return Response({'error': 'SEB config not available'}, status=status.HTTP_404_NOT_FOUND)
 
-        # 1. Generate if missing
-        if not exam.seb_config_file or not exam.seb_config_file.name:
-            from .seb_service import generate_and_save
-            try:
-                generate_and_save(exam)
-                exam.refresh_from_db()
-            except Exception as e:
-                logger.error(f"Failed to generate SEB on the fly: {e}")
-                return Response({'error': 'Could not generate SEB file'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        # 2. Fetch the file from Cloudinary
-        file_url = exam.seb_config_file.url
         try:
-            response = requests.get(file_url, stream=True)
-            response.raise_for_status()
+            config_key, file_bytes = generate_seb_file(exam)
         except Exception as e:
-            logger.error(f"Failed to fetch SEB from Cloudinary: {e}")
-            return Response({'error': 'Could not download SEB file'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.error(f"Failed to generate SEB config for exam {exam.id}: {e}")
+            return Response({'error': 'Could not generate SEB file'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # 3. Send the actual file content to the browser/SEB
-        django_response = HttpResponse(
-            response.content,
-            content_type='application/seb'
-        )
+        exam.seb_config_key = config_key
+        exam.seb_generated_at = timezone.now()
+        exam.seb_enabled = True
+        exam.save(update_fields=['seb_config_key', 'seb_generated_at', 'seb_enabled'])
+
+        django_response = HttpResponse(file_bytes, content_type='application/seb')
         django_response['Content-Disposition'] = f'attachment; filename="exam_{exam.id}_seb.seb"'
         return django_response

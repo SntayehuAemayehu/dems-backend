@@ -1,5 +1,6 @@
 # exams/serializers.py
 from rest_framework import serializers
+from django.conf import settings
 from .models import Exam, Question, ExamAttempt, Answer
 
 
@@ -62,23 +63,17 @@ class ExamSerializer(serializers.ModelSerializer):
         return False
 
     def get_seb_available(self, obj):
-        try:
-            return bool(obj.seb_enabled and obj.seb_config_file and obj.seb_config_file.name)
-        except Exception:
-            return False
+        return bool(obj.is_published and getattr(settings, 'SEB_ENABLED', False))
 
-    # ✅ NEW METHOD
     def get_seb_file_url(self, obj):
-        try:
-            if obj.seb_config_file and obj.seb_config_file.name:
-                request = self.context.get('request')
-                url = f'/api/exams/{obj.id}/seb-config/'
-                if request is not None:
-                    return request.build_absolute_uri(url)
-                return url
-        except Exception:
-            pass
-        return None
+        if not self.get_seb_available(obj):
+            return None
+
+        request = self.context.get('request')
+        url = f'/api/exams/{obj.id}/seb-config/'
+        if request is not None:
+            return request.build_absolute_uri(url)
+        return url
 
 
 class ExamAttemptSerializer(serializers.ModelSerializer):
