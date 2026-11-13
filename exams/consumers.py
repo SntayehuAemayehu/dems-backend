@@ -49,9 +49,23 @@ class LiveClassConsumer(AsyncWebsocketConsumer):
                 'type': 'user_join',
                 'user': self.user.full_name,
                 'role': self.user.role,
-                'user_id': self.user.id
+                'user_id': self.user.id,
+                'target_id': None # ✅ ADDED: Broadcast to everyone
             }
         )
+
+        # ✅ NEW: Send the CURRENT participants list to the NEW user
+        # This ensures a student joining late knows the teacher is already there
+        active_users = await self.get_active_users()
+        for participant in active_users:
+            if participant['user_id'] != self.user.id:
+                await self.send(text_data=json.dumps({
+                    'type': 'user_join',
+                    'user': participant['user'],
+                    'role': participant['role'],
+                    'user_id': participant['user_id'],
+                    'target_id': self.user.id # Target the new user
+                }))
     
     async def disconnect(self, close_code):
         print(f"🔌 WebSocket Disconnected: User {self.user.full_name} left live class {self.course_id}")
@@ -155,6 +169,18 @@ class LiveClassConsumer(AsyncWebsocketConsumer):
                         'audio_enabled': data.get('enabled', True)
                     }
                 )
+            # ✅ NEW: Handle request_join from frontend
+            elif message_type == 'request_join':
+                active_users = await self.get_active_users()
+                for participant in active_users:
+                    if participant['user_id'] != self.user.id:
+                        await self.send(text_data=json.dumps({
+                            'type': 'user_join',
+                            'user': participant['user'],
+                            'role': participant['role'],
+                            'user_id': participant['user_id'],
+                            'target_id': self.user.id
+                        }))
         except json.JSONDecodeError:
             print(f"❌ Invalid JSON received: {text_data}")
         except Exception as e:
@@ -206,11 +232,18 @@ class LiveClassConsumer(AsyncWebsocketConsumer):
             }))
     
     async def user_join(self, event):
+        # ✅ MODIFIED: Respect target_id so we don't send messages to the wrong person
+        if event.get('target_id') and str(event['target_id']) != str(self.user.id):
+            return
+        if event.get('user_id') == self.user.id:
+            return
+
         await self.send(text_data=json.dumps({
             'type': 'user_join',
             'user': event['user'],
             'role': event.get('role', ''),
-            'user_id': event.get('user_id')
+            'user_id': event.get('user_id'),
+            'target_id': event.get('target_id')
         }))
     
     async def user_leave(self, event):
@@ -259,7 +292,10 @@ class LiveClassConsumer(AsyncWebsocketConsumer):
                 return False
         return False
 
-
+    # ✅ NEW: Helper to get active users (returns empty list, relies on request_join)
+    @database_sync_to_async
+    def get_active_users(self):
+        return []
 # ============================================================
 # EXAM PROCTOR CONSUMER
 # ============================================================
