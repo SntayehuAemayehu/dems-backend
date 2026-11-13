@@ -531,6 +531,19 @@ class SEBConfigTests(SimpleTestCase):
             rules[1]['expression'],
         )
 
+    @override_settings(
+        SEB_BASE_URL='',
+        BACKEND_URL='https://dems-backend-0dxk.onrender.com',
+        FRONTEND_URL='https://dems-frontend.onrender.com',
+    )
+    def test_config_uses_backend_url_when_seb_base_url_is_not_set(self):
+        config = build_seb_config(SimpleNamespace(id=42))
+
+        self.assertEqual(
+            config['startURL'],
+            'https://dems-backend-0dxk.onrender.com/api/exams/42/seb-entry/',
+        )
+
     def test_existing_exam_launch_url_uses_config_endpoint(self):
         request = APIRequestFactory().get('/api/exams/42/')
         exam = SimpleNamespace(

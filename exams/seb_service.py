@@ -40,7 +40,7 @@ def _url_filter_rule(url):
     }
 
 def build_seb_config(exam):
-    base = settings.SEB_BASE_URL.rstrip('/')
+    base = (settings.SEB_BASE_URL or settings.BACKEND_URL).rstrip('/')
     frontend = settings.FRONTEND_URL.rstrip('/')
     
     # ✅ Point to backend entry endpoint
@@ -49,7 +49,7 @@ def build_seb_config(exam):
     config = {
         "startURL": entry_url,
         "sendBrowserExamKey": True,
-        "allowQuit": True,  # Keep true for testing so you can exit!
+        "allowQuit": True, 
         "allowSwitchToApplications": False,
         "allowFlashFullscreen": False,
         "browserViewMode": 1,
