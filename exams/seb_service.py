@@ -86,8 +86,9 @@ def generate_and_save(exam):
     if not getattr(settings, 'SEB_ENABLED', False):
         return None
     config_key, file_bytes = generate_seb_file(exam)
-    filename = f"exam_{exam.id}_seb.seb"
-    
+    #filename = f"exam_{exam.id}_seb.seb"
+    # Change from .seb to .xml
+    filename = f"exam_{exam.id}_seb.xml"
     # ✅ Save to whatever storage the model dictates (now Cloudinary)
     exam.seb_config_file.save(filename, ContentFile(file_bytes), save=False)
     
