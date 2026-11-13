@@ -7,8 +7,6 @@ from django.contrib.auth import get_user_model
 from urllib.parse import parse_qs
 
 User = get_user_model()
-
-
 class LiveClassConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         # Get course_id from URL
@@ -296,7 +294,8 @@ class LiveClassConsumer(AsyncWebsocketConsumer):
     @database_sync_to_async
     def get_active_users(self):
         return []
-# ============================================================
+
+
 # EXAM PROCTOR CONSUMER
 # ============================================================
 class ExamProctorConsumer(AsyncWebsocketConsumer):
