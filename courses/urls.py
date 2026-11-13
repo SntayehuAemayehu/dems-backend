@@ -24,6 +24,8 @@ urlpatterns = [
     
     # ✅ TEACHER COURSE GRADES
     path('teacher/course/<int:course_id>/grades/', views.TeacherCourseGradesView.as_view(), name='teacher-course-grades'),
+    path('teacher/course/<int:course_id>/send-result/', views.TeacherSubmitCourseResultView.as_view(), name='teacher-send-course-result'),
+    path('teacher/results/send/', views.TeacherSubmitResultsView.as_view(), name='teacher-send-results'),
     path('<int:course_id>/ai-chat/', views.CourseAIChatView.as_view(), name='course-ai-chat'),
     # Department Head
     path('dept/students/', views.DeptStudentListView.as_view(), name='dept-students'),

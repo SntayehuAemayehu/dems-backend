@@ -9,12 +9,34 @@ class CertificateSerializer(serializers.ModelSerializer):
     student_name = serializers.SerializerMethodField()
     student_id = serializers.CharField(source='student.student_id', read_only=True)
     download_url = serializers.SerializerMethodField()
+    grade = serializers.SerializerMethodField()
+    percentage = serializers.SerializerMethodField()
+    credit_hours = serializers.IntegerField(source='course.credit_hours', read_only=True)
+    department = serializers.SerializerMethodField()
+    year = serializers.SerializerMethodField()
 
     class Meta:
         model = Certificate
         fields = (
             'id', 'certification_id', 'course_title', 'course_code',
-            'student_name', 'student_id', 'issued_at', 'download_url',
+            'student_name', 'student_id', 'grade', 'percentage', 'credit_hours',
+            'department', 'year', 'issued_at', 'download_url',
+        )
+
+    def get_grade(self, obj):
+        return obj.enrollment.grade_letter or 'NON'
+
+    def get_percentage(self, obj):
+        return float(obj.enrollment.percentage_score or 0)
+
+    def get_department(self, obj):
+        department = obj.course.department
+        return department.name if department else ''
+
+    def get_year(self, obj):
+        student = obj.student
+        return student.year or (
+            (student.current_semester + 1) // 2 if student.current_semester else 0
         )
 
     def get_student_name(self, obj):

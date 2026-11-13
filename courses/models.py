@@ -155,7 +155,15 @@ class Enrollment(AskMixin, models.Model):
     total_marks_obtained = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     total_marks_possible = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     
-    # ============ RESULT SENT TO REGISTRAR ============
+    result_submitted_to_department = models.BooleanField(default=False)
+    result_submitted_at = models.DateTimeField(null=True, blank=True)
+    result_submitted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='department_submitted_results',
+    )
     result_sent_to_registrar = models.BooleanField(default=False)
     result_sent_at = models.DateTimeField(null=True, blank=True)
     result_sent_by = models.ForeignKey(

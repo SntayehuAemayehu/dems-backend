@@ -171,6 +171,103 @@ class CourseDetailView(generics.RetrieveUpdateDestroyAPIView):
         return Response({'message': 'Course deleted successfully'}, status=status.HTTP_200_OK)
 
 
+class TeacherSubmitCourseResultView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, course_id):
+        user = request.user
+        if user.role != 'TEACHER':
+            return Response({'error': 'Only teachers can submit results'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            course = Course.objects.get(pk=course_id, instructor=user)
+        except Course.DoesNotExist:
+            return Response({'error': 'Course not found or not assigned to you'}, status=status.HTTP_404_NOT_FOUND)
+
+        student_id = request.data.get('student_id')
+        try:
+            enrollment = Enrollment.objects.select_related('student', 'course').get(
+                course=course,
+                student_id=student_id,
+            )
+        except (Enrollment.DoesNotExist, TypeError, ValueError):
+            return Response({'error': 'Student is not enrolled in this course'}, status=status.HTTP_404_NOT_FOUND)
+
+        if enrollment.result_submitted_to_department:
+            return Response({'message': 'Result has already been submitted to the Department Head'}, status=status.HTTP_200_OK)
+
+        enrollment.update_course_grade()
+        if enrollment.status != 'COMPLETED' or not enrollment.grade_letter or enrollment.grade_letter == 'NON':
+            return Response(
+                {'error': 'This result cannot be submitted until all course assessments are graded'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        enrollment.result_submitted_to_department = True
+        enrollment.result_submitted_at = timezone.now()
+        enrollment.result_submitted_by = user
+        enrollment.save(update_fields=[
+            'result_submitted_to_department',
+            'result_submitted_at',
+            'result_submitted_by',
+        ])
+        return Response({'message': 'Result submitted to the Department Head'})
+
+
+class TeacherSubmitResultsView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        if user.role != 'TEACHER':
+            return Response({'error': 'Only teachers can submit results'}, status=status.HTTP_403_FORBIDDEN)
+
+        enrollment_ids = request.data.get('enrollment_ids')
+        if not isinstance(enrollment_ids, list) or not enrollment_ids:
+            return Response({'error': 'Select at least one student result'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            enrollment_ids = list(dict.fromkeys(int(enrollment_id) for enrollment_id in enrollment_ids))
+        except (TypeError, ValueError):
+            return Response({'error': 'Enrollment IDs must be integers'}, status=status.HTTP_400_BAD_REQUEST)
+
+        enrollments = list(Enrollment.objects.filter(
+            id__in=enrollment_ids,
+            course__instructor=user,
+        ).select_related('course', 'student'))
+        if len(enrollments) != len(enrollment_ids):
+            return Response(
+                {'error': 'One or more selected results are not assigned to you'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        submitted_ids = []
+        skipped_ids = []
+        already_submitted_ids = []
+        for enrollment in enrollments:
+            if enrollment.result_submitted_to_department:
+                already_submitted_ids.append(enrollment.id)
+                continue
+            enrollment.update_course_grade()
+            if enrollment.status != 'COMPLETED' or not enrollment.grade_letter or enrollment.grade_letter == 'NON':
+                skipped_ids.append(enrollment.id)
+                continue
+            enrollment.result_submitted_to_department = True
+            enrollment.result_submitted_at = timezone.now()
+            enrollment.result_submitted_by = user
+            enrollment.save(update_fields=[
+                'result_submitted_to_department',
+                'result_submitted_at',
+                'result_submitted_by',
+            ])
+            submitted_ids.append(enrollment.id)
+
+        return Response({
+            'message': f'{len(submitted_ids)} result(s) submitted to the Department Head.',
+            'submitted_ids': submitted_ids,
+            'skipped_ids': skipped_ids,
+            'already_submitted_ids': already_submitted_ids,
+        })
+
+
 class CourseMaterialView(generics.ListCreateAPIView):
     serializer_class = CourseMaterialSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -1175,6 +1272,7 @@ class TeacherCourseGradesView(APIView):
             }
 
             results.append({
+                'enrollment_id': enrollment.id,
                 'student_id': enrollment.student.id,
                 'student_name': enrollment.student.user.full_name,
                 'student_email': enrollment.student.user.email,
@@ -1185,6 +1283,7 @@ class TeacherCourseGradesView(APIView):
                 'grade_letter': grade_info['letter'],
                 'grade_points': float(grade_info['gpa']),
                 'status': enrollment.status,
+                'result_submitted_to_department': enrollment.result_submitted_to_department,
                 'assessment_grades': grade_breakdown,
             })
         

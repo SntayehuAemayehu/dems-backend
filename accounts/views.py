@@ -3807,25 +3807,23 @@ class DeptHeadStudentResultsView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Check if student is in department
-        if student.department != department.name:
-            return Response(
-                {'error': 'Student is not in your department'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
         from courses.models import Enrollment
         enrollments = Enrollment.objects.filter(
-            student=student
+            student=student,
+            result_submitted_to_department=True,
+            course__department=department,
         ).select_related('course')
+        if not enrollments.exists():
+            return Response(
+                {'error': 'No teacher-submitted results were found for this student in your department'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         
         results = []
         total_marks_obtained = 0
         total_marks_possible = 0
         
         for enrollment in enrollments:
-            enrollment.update_course_grade()
-            
             # Get teacher name
             teacher_name = enrollment.course.instructor.full_name if enrollment.course.instructor else 'Not Assigned'
             
@@ -3843,6 +3841,8 @@ class DeptHeadStudentResultsView(APIView):
                 'grade_points': float(enrollment.grade_points or 0),
                 'status': enrollment.status,
                 'completed': enrollment.status == 'COMPLETED',
+                'sent_to_registrar': enrollment.result_sent_to_registrar,
+                'sent_at': enrollment.result_sent_at.isoformat() if enrollment.result_sent_at else None,
             })
             
             if enrollment.total_marks_obtained:
@@ -3859,8 +3859,10 @@ class DeptHeadStudentResultsView(APIView):
         
         # Get exam results
         from exams.models import ExamAttempt
+        submitted_course_ids = [enrollment.course_id for enrollment in enrollments]
         exam_attempts = ExamAttempt.objects.filter(
             student=student,
+            exam__course_id__in=submitted_course_ids,
             status__in=['SUBMITTED', 'GRADED']
         ).select_related('exam', 'exam__course')
         
@@ -3894,6 +3896,17 @@ class DeptHeadStudentResultsView(APIView):
             'summary': {
                 'total_courses': len(enrollments),
                 'completed_courses': len([r for r in results if r['status'] == 'COMPLETED']),
+                'can_send_to_registrar': any(
+                    enrollment.status == 'COMPLETED' and not enrollment.result_sent_to_registrar
+                    for enrollment in enrollments
+                ),
+                'sent_to_registrar': bool(enrollments) and all(
+                    enrollment.result_sent_to_registrar for enrollment in enrollments
+                ),
+                'sent_at': max(
+                    (enrollment.result_sent_at for enrollment in enrollments if enrollment.result_sent_at),
+                    default=None,
+                ).isoformat() if any(enrollment.result_sent_at for enrollment in enrollments) else None,
                 'total_marks_obtained': round(total_marks_obtained, 2),
                 'total_marks_possible': round(total_marks_possible, 2),
                 'overall_percentage': round(overall_percentage, 2),
@@ -3901,6 +3914,49 @@ class DeptHeadStudentResultsView(APIView):
                 'cgpa': float(student.cgpa or 0),
             }
         })
+
+
+class DeptHeadSubmittedResultsView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        if user.role != 'DEPT_HEAD':
+            return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            department = user.headed_department
+        except Department.DoesNotExist:
+            department = None
+        if department is None:
+            return Response({'results': []})
+
+        from courses.models import Enrollment
+
+        enrollments = Enrollment.objects.filter(
+            result_submitted_to_department=True,
+            course__department=department,
+        ).select_related('student__user', 'course')
+        results = [{
+            'enrollment_id': enrollment.id,
+            'student_id': enrollment.student_id,
+            'student_name': enrollment.student.user.full_name,
+            'student_number': enrollment.student.student_id,
+            'course_id': enrollment.course_id,
+            'course_code': enrollment.course.course_code,
+            'course_title': enrollment.course.title,
+            'year': enrollment.student.year or (
+                (enrollment.student.current_semester + 1) // 2
+                if enrollment.student.current_semester else 0
+            ),
+            'marks_obtained': float(enrollment.total_marks_obtained or 0),
+            'marks_possible': float(enrollment.total_marks_possible or 0),
+            'percentage': float(enrollment.percentage_score or 0),
+            'grade': enrollment.grade_letter or 'NON',
+            'status': enrollment.status,
+            'sent_to_registrar': enrollment.result_sent_to_registrar,
+            'sent_at': enrollment.result_sent_at.isoformat() if enrollment.result_sent_at else None,
+        } for enrollment in enrollments]
+        return Response({'results': results, 'count': len(results)})
 
 
 class DeptHeadSendResultsToRegistrarView(APIView):
@@ -3929,26 +3985,74 @@ class DeptHeadSendResultsToRegistrarView(APIView):
             )
         
         student_id = request.data.get('student_id')
+        student_ids = request.data.get('student_ids')
         course_id = request.data.get('course_id')
         send_all = request.data.get('send_all', False)
         
         from courses.models import Enrollment
+
+        if student_ids is not None:
+            if not isinstance(student_ids, list) or not student_ids:
+                return Response(
+                    {'error': 'Select at least one student'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                selected_ids = list(dict.fromkeys(int(value) for value in student_ids))
+            except (TypeError, ValueError):
+                return Response(
+                    {'error': 'Student IDs must be integers'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if StudentProfile.objects.filter(id__in=selected_ids).count() != len(selected_ids):
+                return Response({'error': 'One or more students were not found'}, status=status.HTTP_404_NOT_FOUND)
+
+            enrollments = Enrollment.objects.filter(
+                student_id__in=selected_ids,
+                course__department=department,
+                result_submitted_to_department=True,
+                result_sent_to_registrar=False,
+            ).select_related('student__user')
+            sent_student_ids = set()
+            sent_count = 0
+            for enrollment in enrollments:
+                if enrollment.status == 'COMPLETED' and enrollment.grade_letter and enrollment.grade_letter != 'NON':
+                    enrollment.result_sent_to_registrar = True
+                    enrollment.result_sent_at = timezone.now()
+                    enrollment.result_sent_by = user
+                    enrollment.save()
+                    sent_count += 1
+                    sent_student_ids.add(enrollment.student_id)
+
+            if sent_count:
+                send_notification(
+                    recipient_roles=['REGISTRAR'],
+                    title='📋 Student Results Sent',
+                    message=f'Department Head {user.full_name} sent {sent_count} student result(s) from {department.name}.',
+                    notification_type='SYSTEM_ALERT',
+                    link='/registrar/results',
+                )
+
+            return Response({
+                'message': f'{sent_count} result(s) sent to the Registrar.',
+                'sent_count': sent_count,
+                'sent_student_ids': sorted(sent_student_ids),
+            })
         
         if student_id:
             # Send results for specific student
             try:
                 student = StudentProfile.objects.get(id=student_id)
-                if student.department != department.name:
-                    return Response(
-                        {'error': 'Student is not in your department'},
-                        status=status.HTTP_403_FORBIDDEN
-                    )
                 
-                enrollments = Enrollment.objects.filter(student=student)
+                enrollments = Enrollment.objects.filter(
+                    student=student,
+                    course__department=department,
+                    result_submitted_to_department=True,
+                    result_sent_to_registrar=False,
+                )
                 sent_count = 0
                 
                 for enrollment in enrollments:
-                    enrollment.update_course_grade()
                     if enrollment.status == 'COMPLETED' and enrollment.grade_letter and enrollment.grade_letter != 'NON':
                         # Mark as sent to Registrar
                         enrollment.result_sent_to_registrar = True
@@ -3957,8 +4061,6 @@ class DeptHeadSendResultsToRegistrarView(APIView):
                         enrollment.save()
                         sent_count += 1
                 
-                # Send notification to Registrar
-                from notifications.utils import send_notification
                 send_notification(
                     recipient_roles=['REGISTRAR'],
                     title='📋 Student Results Sent',
@@ -3986,11 +4088,14 @@ class DeptHeadSendResultsToRegistrarView(APIView):
                 from courses.models import Course
                 course = Course.objects.get(id=course_id, department=department)
                 
-                enrollments = Enrollment.objects.filter(course=course)
+                enrollments = Enrollment.objects.filter(
+                    course=course,
+                    result_submitted_to_department=True,
+                    result_sent_to_registrar=False,
+                )
                 sent_count = 0
                 
                 for enrollment in enrollments:
-                    enrollment.update_course_grade()
                     if enrollment.status == 'COMPLETED' and enrollment.grade_letter and enrollment.grade_letter != 'NON':
                         enrollment.result_sent_to_registrar = True
                         enrollment.result_sent_at = timezone.now()
@@ -3998,7 +4103,6 @@ class DeptHeadSendResultsToRegistrarView(APIView):
                         enrollment.save()
                         sent_count += 1
                 
-                from notifications.utils import send_notification
                 send_notification(
                     recipient_roles=['REGISTRAR'],
                     title='📋 Course Results Sent',
@@ -4024,12 +4128,13 @@ class DeptHeadSendResultsToRegistrarView(APIView):
             # Send all results for the department
             enrollments = Enrollment.objects.filter(
                 course__department=department,
-                status='COMPLETED'
+                status='COMPLETED',
+                result_submitted_to_department=True,
+                result_sent_to_registrar=False,
             )
             sent_count = 0
             
             for enrollment in enrollments:
-                enrollment.update_course_grade()
                 if enrollment.grade_letter and enrollment.grade_letter != 'NON':
                     enrollment.result_sent_to_registrar = True
                     enrollment.result_sent_at = timezone.now()
@@ -4037,7 +4142,6 @@ class DeptHeadSendResultsToRegistrarView(APIView):
                     enrollment.save()
                     sent_count += 1
             
-            from notifications.utils import send_notification
             send_notification(
                 recipient_roles=['REGISTRAR'],
                 title='📋 Department Results Sent',
@@ -4098,19 +4202,38 @@ class DeptHeadGetSentResultsView(APIView):
         if user.role == 'DEPT_HEAD':
             enrollments = enrollments.filter(course__department=department)
         
+        from certificates.models import Certificate
+        enrollment_ids = list(enrollments.values_list('id', flat=True))
+        published_certificates = {
+            certificate.enrollment_id: certificate
+            for certificate in Certificate.objects.filter(
+                enrollment_id__in=enrollment_ids,
+                is_published=True,
+            )
+        }
         result = []
         for enrollment in enrollments:
+            certificate = published_certificates.get(enrollment.id)
             result.append({
+                'enrollment_id': enrollment.id,
                 'student_id': enrollment.student.id,
                 'student_name': enrollment.student.user.full_name,
                 'student_number': enrollment.student.student_id,
+                'year': enrollment.student.year or (
+                    (enrollment.student.current_semester + 1) // 2
+                    if enrollment.student.current_semester else 0
+                ),
                 'course_id': enrollment.course.id,
                 'course_code': enrollment.course.course_code,
                 'course_title': enrollment.course.title,
                 'credit_hours': enrollment.course.credit_hours,
                 'grade': enrollment.grade_letter or 'NON',
+                'total_marks_obtained': float(enrollment.total_marks_obtained or 0),
+                'total_marks_possible': float(enrollment.total_marks_possible or 0),
                 'grade_points': float(enrollment.grade_points or 0),
                 'percentage': float(enrollment.percentage_score or 0),
+                'certificate_issued': certificate is not None,
+                'certification_id': certificate.certification_id if certificate else None,
                 'sent_at': enrollment.result_sent_at.isoformat() if enrollment.result_sent_at else None,
                 'sent_by': enrollment.result_sent_by.full_name if enrollment.result_sent_by else None,
                 'department': enrollment.course.department.name if enrollment.course.department else None,

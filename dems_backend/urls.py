@@ -14,6 +14,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/auth/', include('accounts.urls')),
     path('api/courses/', include('courses.urls')),
+    path('api/certificates/', include('certificates.urls')),
     path('api/exams/', include('exams.urls')),
     path('api/payments/', include('payments.urls')),
     path('api/proctoring/', include('proctoring.urls')),

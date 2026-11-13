@@ -9,8 +9,8 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
-        ('accounts', '0008_alter_studentprofile_student_id'),
-        ('courses', '0004_course_year'),
+        ('accounts', '0001_initial'),
+        ('courses', '0001_initial'),
     ]
 
     operations = [

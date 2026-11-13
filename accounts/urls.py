@@ -46,6 +46,7 @@ urlpatterns = [
 
     path('dept-head/teachers/manage/', views.DeptHeadTeacherManagementView.as_view(), name='dept-head-teacher-manage'),
     path('dept-head/students/<int:student_id>/results/', views.DeptHeadStudentResultsView.as_view(), name='dept-head-student-results'),
+    path('dept-head/results/', views.DeptHeadSubmittedResultsView.as_view(), name='dept-head-results'),
     path('dept-head/send-results/', views.DeptHeadSendResultsToRegistrarView.as_view(), name='dept-head-send-results'),
     path('dept-head/sent-results/', views.DeptHeadGetSentResultsView.as_view(), name='dept-head-sent-results'),
     # Registrar can view sent results (READ ONLY)

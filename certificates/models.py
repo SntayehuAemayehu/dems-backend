@@ -22,6 +22,7 @@ class Certificate(models.Model):
     )
     certification_id = models.CharField(max_length=64, unique=True, db_index=True)
     pdf_file = models.FileField(upload_to='certificates/')
+    is_published = models.BooleanField(default=False)
     issued_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

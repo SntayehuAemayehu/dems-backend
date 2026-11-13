@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'proctoring',
     'notifications',
     'analytics',
+    'certificates',
     'chat',
     'news',
     'django_ask_ai',
@@ -204,10 +205,13 @@ CHAPA_TEST_PUBLISHABLE_KEY = config('CHAPA_TEST_PUBLISHABLE_KEY', default='CHAPU
 CHAPA_BASE_URL = config('CHAPA_BASE_URL', default='https://api.chapa.co/v1')
 BASE_URL = config('BASE_URL', default='http://localhost:8000')
 # URL config — used by Chapa callbacks
-BACKEND_URL = config('BACKEND_URL', default='http://localhost:8000')
+BACKEND_URL = config(
+    'BACKEND_URL',
+    default='http://localhost:8000' if DEBUG else 'https://dems-backend-0dxk.onrender.com'
+)
 FRONTEND_URL = config(
     'FRONTEND_URL',
-    default='http://localhost:3000' if DEBUG else 'https://dems-frontend.onrender.com',
+    default='http://localhost:3000' if DEBUG else 'https://dems-frontend.onrender.com'
 )
 SEB_ENABLED = config('SEB_ENABLED', default=False, cast=bool)
 SEB_BASE_URL = config(
