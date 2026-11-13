@@ -230,9 +230,7 @@ class LiveClassConsumer(AsyncWebsocketConsumer):
             }))
     
     async def user_join(self, event):
-        # ✅ MODIFIED: Respect target_id so we don't send messages to the wrong person
-        if event.get('target_id') and str(event['target_id']) != str(self.user.id):
-            return
+        # ✅ DO NOT filter by target_id here
         if event.get('user_id') == self.user.id:
             return
 
@@ -241,7 +239,6 @@ class LiveClassConsumer(AsyncWebsocketConsumer):
             'user': event['user'],
             'role': event.get('role', ''),
             'user_id': event.get('user_id'),
-            'target_id': event.get('target_id')
         }))
     
     async def user_leave(self, event):
