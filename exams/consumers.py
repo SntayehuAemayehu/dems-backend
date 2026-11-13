@@ -230,7 +230,7 @@ class LiveClassConsumer(AsyncWebsocketConsumer):
             }))
     
     async def user_join(self, event):
-        # ✅ DO NOT filter by target_id. Send to everyone.
+        # ✅ DO NOT filter by target_id here
         if event.get('user_id') == self.user.id:
             return
 
