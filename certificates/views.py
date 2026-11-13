@@ -19,8 +19,32 @@ class MyCertificatesView(APIView):
     def get(self, request):
         if request.user.role != 'STUDENT':
             return Response({'error': 'Only students can view their certificates'}, status=403)
-        certs = Certificate.objects.filter(student__user=request.user, is_published=True)
-        serializer = CertificateSerializer(certs, many=True, context={'request': request})
+        certs = list(Certificate.objects.filter(
+            student__user=request.user,
+            is_published=True,
+        ).select_related('student__user', 'course', 'enrollment'))
+        if not certs:
+            return Response([])
+
+        student = certs[0].student
+        enrollments = list(student.enrollments.select_related('course').order_by(
+            'course__year',
+            'course__semester',
+            'course__course_code',
+        ))
+        published_enrollment_ids = {
+            certificate.enrollment_id
+            for certificate in certs
+        }
+        serializer = CertificateSerializer(
+            certs,
+            many=True,
+            context={
+                'request': request,
+                'student_enrollments': enrollments,
+                'published_enrollment_ids': published_enrollment_ids,
+            },
+        )
         return Response(serializer.data)
 
 

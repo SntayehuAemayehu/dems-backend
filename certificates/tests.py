@@ -70,6 +70,57 @@ class RegistrarCertificateIssueTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data, [])
 
+    def test_certificate_grade_uses_marks_and_credit_weighted_grade_scale(self):
+        self.enrollment.total_marks_obtained = 72
+        self.enrollment.total_marks_possible = 100
+        self.enrollment.save(update_fields=['total_marks_obtained', 'total_marks_possible'])
+        other_course = Course.objects.create(
+            course_code='CS102',
+            title='Data Structures',
+            department=self.enrollment.course.department,
+            year=1,
+            semester='2',
+        )
+        other_enrollment = Enrollment.objects.create(
+            student=self.student,
+            course=other_course,
+            status='ACTIVE',
+        )
+        Certificate.objects.create(
+            student=self.student,
+            enrollment=self.enrollment,
+            course=self.enrollment.course,
+            certification_id='CERT-REAL-GRADE-2026',
+            is_published=True,
+        )
+        self.client.force_authenticate(self.student_user)
+
+        response = self.client.get('/api/certificates/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data[0]['grade'], 'B')
+        self.assertEqual(response.data[0]['student_id'], self.student.student_id)
+        self.assertEqual(response.data[0]['student_name'], 'Test Student')
+        self.assertEqual(response.data[0]['year'], 1)
+        self.assertEqual(response.data[0]['semester'], 1)
+        self.assertEqual(response.data[0]['gpa'], 3.0)
+        self.assertEqual(response.data[0]['cgpa'], 3.0)
+        self.assertEqual(len(response.data[0]['courses']), 2)
+
+        released_course = next(
+            course for course in response.data[0]['courses']
+            if course['course_id'] == self.enrollment.course_id
+        )
+        pending_course = next(
+            course for course in response.data[0]['courses']
+            if course['course_id'] == other_enrollment.course_id
+        )
+        self.assertEqual(released_course['score'], 72.0)
+        self.assertEqual(released_course['score_possible'], 100.0)
+        self.assertEqual(released_course['gpa'], 3.0)
+        self.assertIsNone(pending_course['score'])
+        self.assertEqual(pending_course['grade'], 'Not issued')
+
     def test_course_certificate_service_builds_a_pdf(self):
         generated = certificate_service.generate_course_certificate(self.student, self.enrollment)
 
@@ -98,6 +149,7 @@ class RegistrarCertificateIssueTests(TestCase):
         self.assertEqual(visible.status_code, 200)
         self.assertEqual(len(visible.data), 1)
         self.assertEqual(visible.data[0]['certification_id'], 'CERT-ISSUED-2026')
-        self.assertEqual(visible.data[0]['grade'], 'A')
-        self.assertEqual(visible.data[0]['percentage'], 90.0)
+        self.assertEqual(visible.data[0]['grade'], 'A+')
+        self.assertEqual(visible.data[0]['gpa'], 4.0)
+        self.assertEqual(visible.data[0]['cgpa'], 4.0)
         self.assertEqual(visible.data[0]['department'], 'Computer Science')
