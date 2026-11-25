@@ -1,9 +1,11 @@
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 from unittest.mock import patch
 
 from accounts.models import StudentProfile, User
+from analytics.models import IDSequence, SystemConfig
 
 
 class StudentDocumentReviewTests(TestCase):
@@ -87,3 +89,51 @@ class StudentDocumentReviewTests(TestCase):
             format='multipart',
         )
         self.assertEqual(response.status_code, 400)
+
+    @patch('accounts.views.send_notification', side_effect=RuntimeError('notification unavailable'))
+    def test_generate_student_id_handles_existing_id_collision(self, notify):
+        year = timezone.now().year
+        prefix = 'STU'
+        format_string = '{prefix}{year}{seq_padded}'
+        SystemConfig.objects.update_or_create(
+            key='student_id_prefix',
+            defaults={'value': prefix},
+        )
+        SystemConfig.objects.update_or_create(
+            key='student_id_format',
+            defaults={'value': format_string},
+        )
+        IDSequence.objects.create(prefix=prefix, year=year, last_number=2)
+
+        existing_user = User.objects.create_user(
+            email='existing@example.com',
+            password='test-password',
+            full_name='Existing Student',
+        )
+        StudentProfile.objects.create(
+            user=existing_user,
+            student_id=f'{prefix}{year}000003',
+        )
+
+        self.student.documents_verified = True
+        self.student.save(update_fields=['documents_verified'])
+        self.client.force_authenticate(self.registrar)
+
+        response = self.client.post(
+            f'/api/auth/registrar/students/{self.student.id}/generate-id/',
+            format='json',
+        )
+
+        expected_id = f'{prefix}{year}000003-{self.student.id}'
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['student_id'], expected_id)
+        self.student.refresh_from_db()
+        self.assertEqual(self.student.student_id, expected_id)
+
+        retry_response = self.client.post(
+            f'/api/auth/registrar/students/{self.student.id}/generate-id/',
+            format='json',
+        )
+        self.assertEqual(retry_response.status_code, 200)
+        self.assertEqual(retry_response.data['student_id'], expected_id)
+        notify.assert_called_once()

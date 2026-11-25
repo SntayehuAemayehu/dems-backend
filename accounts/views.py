@@ -2395,51 +2395,89 @@ class RegistrarGenerateIDView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
         
+        from django.db import transaction
+        from analytics.models import IDSequence, SystemConfig
+
+        prefix = SystemConfig.get_value('student_id_prefix', 'MAU')
+        id_format = SystemConfig.get_value(
+            'student_id_format', '{prefix}{year}{seq_padded}'
+        )
+        year = timezone.now().year
+
         try:
-            student = StudentProfile.objects.get(id=student_id)
+            with transaction.atomic():
+                student = StudentProfile.objects.select_for_update().get(id=student_id)
+
+                if student.student_id:
+                    return Response({
+                        'message': 'Student ID already exists',
+                        'student_id': student.student_id,
+                    })
+
+                if student.payment_status != 'VERIFIED':
+                    return Response(
+                        {'error': 'Payment must be verified before generating ID'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                if not student.documents_verified:
+                    return Response(
+                        {'error': 'Documents must be verified before generating ID'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                sequence = IDSequence.get_next_number(prefix=prefix, year=year)
+                department_code = (student.department or 'GEN')[:3].upper()
+                try:
+                    generated_id = id_format.format(
+                        prefix=prefix,
+                        year=year,
+                        seq=sequence,
+                        seq_padded=str(sequence).zfill(6),
+                        seq_4digit=str(sequence).zfill(4),
+                        seq_3digit=str(sequence).zfill(3),
+                        seq_2digit=str(sequence).zfill(2),
+                        dept=department_code,
+                    )
+                except (AttributeError, IndexError, KeyError, TypeError, ValueError) as error:
+                    logger.warning('Invalid student ID format %r: %s', id_format, error)
+                    generated_id = f'{prefix}{year}{str(sequence).zfill(6)}'
+
+                if not generated_id:
+                    generated_id = f'{prefix}{year}{str(sequence).zfill(6)}'
+
+                if StudentProfile.objects.filter(student_id=generated_id).exists():
+                    base_id = generated_id
+                    generated_id = f'{base_id}-{student.id}'
+                    collision = 1
+                    while StudentProfile.objects.filter(student_id=generated_id).exists():
+                        collision += 1
+                        generated_id = f'{base_id}-{student.id}-{collision}'
+
+                student.student_id = generated_id
+                student.save(update_fields=['student_id'])
         except StudentProfile.DoesNotExist:
             return Response({'error': 'Student not found'}, status=status.HTTP_404_NOT_FOUND)
-        
-        if student.payment_status != 'VERIFIED':
-            return Response({'error': 'Payment must be verified before generating ID'}, 
-                          status=status.HTTP_400_BAD_REQUEST)
-        
-        if not student.documents_verified:
-            return Response({'error': 'Documents must be verified before generating ID'}, 
-                          status=status.HTTP_400_BAD_REQUEST)
-        
-        if student.student_id:
-            return Response({'error': 'Student already has an ID'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        from analytics.models import SystemConfig
-        
-        id_format = SystemConfig.get_value('student_id_format', 'STU{year}{seq:06d}')
-        year = timezone.now().year
-        student_count = StudentProfile.objects.count() + 1
-        
+
         try:
-            student_id = id_format.format(
-                year=year,
-                seq=student_count,
-                dept=student.department[:3].upper() if student.department else 'GEN'
+            send_notification(
+                recipient_user=student.user,
+                title='🆔 Student ID Generated',
+                message=f'Your Student ID has been generated: {generated_id}.',
+                notification_type='SYSTEM_ALERT',
+                link='/profile'
             )
-        except:
-            student_id = f"STU{year}{student_count:06d}"
-        
-        student.student_id = student_id
-        student.save()
-        
-        send_notification(
-            recipient_user=student.user,
-            title='🆔 Student ID Generated',
-            message=f'Your Student ID has been generated: {student_id}.',
-            notification_type='SYSTEM_ALERT',
-            link='/profile'
-        )
+        except Exception as error:
+            logger.warning(
+                'Student ID %s was generated for student %s, but notification failed: %s',
+                generated_id,
+                student.id,
+                error,
+            )
         
         return Response({
             'message': 'Student ID generated successfully',
-            'student_id': student_id
+            'student_id': generated_id
         })
 
 
