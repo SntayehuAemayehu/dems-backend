@@ -1,11 +1,11 @@
 # exams/seb_service.py
 import hashlib
+import gzip
 import json
 import os
 import re
 import secrets
 import plistlib
-from io import BytesIO
 from urllib.parse import urlsplit
 
 from django.conf import settings
@@ -80,9 +80,9 @@ def build_seb_config(exam, launch_id=None):
 def generate_seb_file(exam, launch_id=None):
     config = build_seb_config(exam, launch_id=launch_id)
     config_key = generate_config_key(config)
-    buffer = BytesIO()
-    plistlib.dump(config, buffer, fmt=plistlib.FMT_XML)
-    return config_key, buffer.getvalue()
+    xml_config = plistlib.dumps(config, fmt=plistlib.FMT_XML)
+    plain_data = b'plnd' + gzip.compress(xml_config)
+    return config_key, gzip.compress(plain_data)
 
 # exams/seb_service.py
 

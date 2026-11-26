@@ -1,4 +1,6 @@
+import gzip
 import json
+import plistlib
 import re
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
@@ -12,7 +14,7 @@ from accounts.models import Department, StudentProfile, TeacherProfile, User
 from courses.models import Course, Enrollment
 from exams.models import Exam, ExamAttempt, ExaminerAssignment, Question, SEBSession
 from exams.serializers import ExamSerializer
-from exams.seb_service import build_seb_config
+from exams.seb_service import build_seb_config, generate_seb_file
 from exams.views import SEBDownloadView
 from exams.consumers import ExamProctorConsumer
 from proctoring.models import ProctorImage
@@ -606,6 +608,21 @@ class SEBConfigTests(SimpleTestCase):
         self.assertEqual(
             config['startURL'],
             'https://dems-backend-0dxk.onrender.com/api/exams/42/seb-entry/?launch_id=launch-token',
+        )
+
+    @override_settings(
+        SEB_BASE_URL='https://dems-backend-0dxk.onrender.com',
+        FRONTEND_URL='https://dems-frontend.onrender.com',
+    )
+    def test_generated_seb_file_uses_unencrypted_config_link_format(self):
+        _, file_bytes = generate_seb_file(SimpleNamespace(id=42))
+
+        plain_data = gzip.decompress(file_bytes)
+        self.assertTrue(plain_data.startswith(b'plnd'))
+        config = plistlib.loads(gzip.decompress(plain_data[4:]))
+        self.assertEqual(
+            config['startURL'],
+            'https://dems-backend-0dxk.onrender.com/api/exams/42/seb-entry/',
         )
 
 
