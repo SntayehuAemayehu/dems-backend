@@ -144,6 +144,42 @@ class StartExamViewTests(TestCase):
         self.assertIn(attempt.id, [row['id'] for row in response.data])
         self.assertEqual(len(response.data), 1)
 
+    def test_seb_launch_status_reports_submitted_attempt_for_its_student(self):
+        session = SEBSession.objects.create(
+            student=self.student,
+            exam=self.exam,
+            expires_at=timezone.now() + timezone.timedelta(minutes=5),
+        )
+        attempt = ExamAttempt.objects.create(
+            student=self.student,
+            exam=self.exam,
+            status='SUBMITTED',
+            score=8,
+            total_marks=10,
+        )
+        session.attempt = attempt
+        session.used = True
+        session.save(update_fields=['attempt', 'used'])
+
+        response = self.client.get(f'/api/exams/seb-launch/{session.id}/status/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['status'], 'SUBMITTED')
+        self.assertTrue(response.data['completed'])
+        self.assertFalse(response.data['expired'])
+
+    @override_settings(SEB_ENABLED=True)
+    def test_normal_browser_config_request_does_not_download_seb_file(self):
+        response = self.client.get(
+            f'/api/exams/{self.exam.id}/seb-config.seb',
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'text/html; charset=utf-8')
+        self.assertNotIn('attachment', response.get('Content-Disposition', ''))
+        self.assertIn('href="sebs://', response.content.decode())
+
     def test_student_with_completed_enrollment_can_start_exam(self):
         enrollment = Enrollment.objects.get(student=self.student, course=self.course)
         enrollment.status = 'COMPLETED'
@@ -178,6 +214,7 @@ class StartExamViewTests(TestCase):
     def test_seb_launch_signs_student_in_without_password_once(self):
         launch_response = self.client.post(f'/api/exams/{self.exam.id}/seb-launch/')
         self.assertEqual(launch_response.status_code, 201)
+        self.assertIn('launch_id', launch_response.data)
         self.assertIn(
             f'/api/exams/{self.exam.id}/seb-config.seb?launch_id=',
             launch_response.data['seb_file_url'],
@@ -186,7 +223,8 @@ class StartExamViewTests(TestCase):
 
         unauthenticated_client = APIClient()
         config_response = unauthenticated_client.get(
-            f'/api/exams/{self.exam.id}/seb-config.seb?launch_id={launch_id}'
+            f'/api/exams/{self.exam.id}/seb-config.seb?launch_id={launch_id}',
+            HTTP_USER_AGENT='SEB/3.5.0 (Windows)',
         )
         self.assertEqual(config_response.status_code, 200)
         self.assertEqual(config_response['Content-Type'], 'application/seb')
@@ -700,6 +738,8 @@ class SEBConfigTests(SimpleTestCase):
             config['startURL'],
             'https://dems-backend-0dxk.onrender.com/api/exams/42/seb-entry/',
         )
+        self.assertEqual(config['quitURL'], 'seb://quit')
+        self.assertFalse(config['quitURLConfirm'])
 
 
     def test_existing_exam_launch_url_uses_config_endpoint(self):
@@ -726,7 +766,10 @@ class SEBConfigTests(SimpleTestCase):
             seb_enabled=False,
             save=Mock(),
         )
-        request = APIRequestFactory().get('/api/exams/42/seb-config/')
+        request = APIRequestFactory().get(
+            '/api/exams/42/seb-config/',
+            HTTP_USER_AGENT='SEB/3.5.0 (Windows)',
+        )
 
         with (
             patch('exams.views.Exam.objects.get', return_value=exam),

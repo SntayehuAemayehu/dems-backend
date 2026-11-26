@@ -73,7 +73,8 @@ def build_seb_config(exam, launch_id=None):
         ],
         "examSessionClearCookiesOnStart": True,
         "examSessionClearCookiesOnEnd": True,
-        "quitURL": f"{base}/api/exams/{exam.id}/seb-quit/",
+        "quitURL": "seb://quit",
+        "quitURLConfirm": False,
     }
     return config
 

@@ -23,6 +23,7 @@ urlpatterns = [
     path('<int:exam_id>/seb-config.seb', views.SEBDownloadView.as_view(), name='seb-config-file'),
     path('<int:exam_id>/seb-config/', views.SEBDownloadView.as_view(), name='seb-config'),
     path('<int:exam_id>/seb-launch/', views.SEBLaunchView.as_view(), name='seb-launch'),
+    path('seb-launch/<uuid:launch_id>/status/', views.SEBLaunchStatusView.as_view(), name='seb-launch-status'),
     path('<int:exam_id>/seb-login/', views.SEBLoginView.as_view(), name='seb-login'),
 
     # Results

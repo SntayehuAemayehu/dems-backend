@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.utils import timezone
 from django.http import HttpResponse
+from django.utils.html import format_html
 from django.db import transaction
 from .models import Exam, Question, ExamAttempt, Answer, ExamRecording, ExaminerAssignment
 from .serializers import ExamSerializer, QuestionSerializer, ExamAttemptSerializer
@@ -2791,7 +2792,44 @@ class SEBLaunchView(APIView):
         config_url = request.build_absolute_uri(
             f'/api/exams/{exam.id}/seb-config.seb?launch_id={session.id}'
         )
-        return Response({'seb_file_url': config_url}, status=status.HTTP_201_CREATED)
+        return Response({
+            'seb_file_url': config_url,
+            'launch_id': str(session.id),
+        }, status=status.HTTP_201_CREATED)
+
+
+class SEBLaunchStatusView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, launch_id):
+        try:
+            session = SEBSession.objects.select_related('attempt').get(
+                id=launch_id,
+                student__user=request.user,
+            )
+        except (SEBSession.DoesNotExist, ValueError):
+            return Response(
+                {'error': 'SEB launch session not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        attempt = session.attempt
+        if attempt is None:
+            expired = timezone.now() >= session.expires_at
+            return Response({
+                'status': 'EXPIRED' if expired else 'WAITING',
+                'completed': False,
+                'expired': expired,
+            })
+
+        completed = attempt.status in ('SUBMITTED', 'GRADED') or (
+            attempt.status == 'FLAGGED' and attempt.score is not None
+        )
+        return Response({
+            'status': attempt.status,
+            'completed': completed,
+            'expired': False,
+        })
 
 
 class SEBDownloadView(APIView):
@@ -2815,6 +2853,24 @@ class SEBDownloadView(APIView):
                 return Response({'error': 'Invalid SEB launch ticket.'}, status=status.HTTP_403_FORBIDDEN)
             if not launch.is_valid():
                 return Response({'error': 'SEB launch ticket expired. Please reopen the exam.'}, status=status.HTTP_403_FORBIDDEN)
+
+        if 'SEB' not in request.META.get('HTTP_USER_AGENT', '').upper():
+            scheme = 'sebs' if request.is_secure() else 'seb'
+            launch_url = f'{scheme}://{request.get_host()}{request.get_full_path()}'
+            response = HttpResponse(
+                format_html(
+                    '<!doctype html><html lang="en"><meta charset="utf-8">'
+                    '<title>Open exam in Safe Exam Browser</title><body>'
+                    '<main><h1>Open this exam in Safe Exam Browser</h1>'
+                    '<p>The exam configuration is only provided to Safe Exam Browser. '
+                    'Use the button below to open it there.</p>'
+                    '<a href="{}">Open Safe Exam Browser</a></main></body></html>',
+                    launch_url,
+                ),
+                content_type='text/html; charset=utf-8',
+            )
+            response['Cache-Control'] = 'no-store'
+            return response
 
         try:
             config_key, file_bytes = generate_seb_file(exam, launch_id=launch_id)
