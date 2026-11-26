@@ -4,7 +4,9 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from accounts.models import Department, StudentProfile, User
-from courses.models import Course, Enrollment
+from courses.models import Assignment, AssignmentSubmission, Course, Enrollment
+from exams.models import Exam, ExamAttempt
+from django.utils import timezone
 
 
 class DepartmentResultWorkflowTests(TestCase):
@@ -56,6 +58,10 @@ class DepartmentResultWorkflowTests(TestCase):
         self.assertEqual(visible.status_code, 200)
         self.assertEqual(visible.data['results'][0]['year'], 2)
         self.assertEqual(visible.data['results'][0]['grade'], 'B')
+        self.assertEqual(visible.data['results'][0]['assessment_grades']['quiz'], {
+            'obtained': 0.0,
+            'possible': 0.0,
+        })
         self.assertEqual(
             self.client.post('/api/auth/dept-head/results/', {}, format='json').status_code,
             405,
@@ -80,6 +86,43 @@ class DepartmentResultWorkflowTests(TestCase):
             self.client.post('/api/auth/registrar/sent-results/', {}, format='json').status_code,
             405,
         )
+
+    def test_submitted_results_include_assessment_category_marks(self):
+        self.client.force_authenticate(self.head)
+        course = self.enrollment.course
+        exam = Exam.objects.create(
+            course=course,
+            title='Quiz',
+            exam_type='QUIZ',
+            start_time=timezone.now() - timezone.timedelta(hours=2),
+            end_time=timezone.now() - timezone.timedelta(hours=1),
+            total_marks=10,
+        )
+        ExamAttempt.objects.create(
+            student=self.student,
+            exam=exam,
+            status='GRADED',
+            score=8,
+            total_marks=10,
+        )
+        assignment = Assignment.objects.create(
+            course=course,
+            title='Assignment',
+            due_date=timezone.now() - timezone.timedelta(days=1),
+            total_marks=20,
+        )
+        AssignmentSubmission.objects.create(
+            assignment=assignment,
+            student=self.student,
+            marks_obtained=17,
+        )
+
+        response = self.client.get('/api/auth/dept-head/results/')
+
+        self.assertEqual(response.status_code, 200)
+        assessment_grades = response.data['results'][0]['assessment_grades']
+        self.assertEqual(assessment_grades['quiz'], {'obtained': 8.0, 'possible': 10.0})
+        self.assertEqual(assessment_grades['assignment'], {'obtained': 17.0, 'possible': 20.0})
 
     def test_head_can_forward_selected_students_in_bulk(self):
         self.client.force_authenticate(self.head)

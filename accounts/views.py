@@ -3974,6 +3974,12 @@ class DeptHeadSubmittedResultsView(APIView):
             result_submitted_to_department=True,
             course__department=department,
         ).select_related('student__user', 'course')
+        from courses.assessment_grades import build_assessment_grade_breakdowns
+
+        grade_breakdowns = build_assessment_grade_breakdowns(
+            (enrollment.course_id, enrollment.student_id)
+            for enrollment in enrollments
+        )
         results = [{
             'enrollment_id': enrollment.id,
             'student_id': enrollment.student_id,
@@ -3990,6 +3996,15 @@ class DeptHeadSubmittedResultsView(APIView):
             'marks_possible': float(enrollment.total_marks_possible or 0),
             'percentage': float(enrollment.percentage_score or 0),
             'grade': enrollment.grade_letter or 'NON',
+            'assessment_grades': {
+                category: {
+                    'obtained': float(values['obtained']),
+                    'possible': float(values['possible']),
+                }
+                for category, values in grade_breakdowns[
+                    (enrollment.course_id, enrollment.student_id)
+                ].items()
+            },
             'status': enrollment.status,
             'sent_to_registrar': enrollment.result_sent_to_registrar,
             'sent_at': enrollment.result_sent_at.isoformat() if enrollment.result_sent_at else None,

@@ -167,7 +167,7 @@ class StartExamViewTests(TestCase):
         self.assertEqual(entry_response.status_code, 302)
         self.assertEqual(
             entry_response['Location'],
-            f'https://dems-frontend.onrender.com/login?seb_return=/exams/{self.exam.id}/start#seb_session={launch_id}',
+            f'https://dems-frontend.onrender.com/login?seb_return=/exams/{self.exam.id}/start&seb_session={launch_id}',
         )
 
         login_response = unauthenticated_client.post(

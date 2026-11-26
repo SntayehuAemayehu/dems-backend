@@ -16,6 +16,7 @@ from .models import (
     Assignment,
     AssignmentSubmission,
 )
+from .assessment_grades import build_assessment_grade_breakdowns
 from .serializers import (
     CourseSerializer, CourseMaterialSerializer, EnrollmentSerializer,
     AssignmentSerializer, AssignmentSubmissionSerializer
@@ -1205,61 +1206,31 @@ class TeacherCourseGradesView(APIView):
             course=course
         ).select_related('student__user')
 
-        from exams.models import ExamAttempt
         from decimal import Decimal
 
-        grade_breakdowns = {}
-        for enrollment in enrollments:
-            grade_breakdowns[enrollment.student_id] = {
-                category: {'obtained': Decimal('0'), 'possible': Decimal('0')}
-                for category in ('quiz', 'mid', 'assignment', 'final')
-            }
-
-        exam_attempts = ExamAttempt.objects.filter(
-            exam__course=course,
-            status__in=('SUBMITTED', 'GRADED'),
-            score__isnull=False,
-        ).select_related('exam')
-        for attempt in exam_attempts:
-            category = {
-                'QUIZ': 'quiz',
-                'MID': 'mid',
-                'MIDTERM': 'mid',
-                'FINAL': 'final',
-            }.get(attempt.exam.exam_type)
-            breakdown = grade_breakdowns.get(attempt.student_id)
-            if category and breakdown is not None:
-                breakdown[category]['obtained'] += Decimal(str(attempt.score))
-                breakdown[category]['possible'] += Decimal(str(attempt.total_marks or attempt.exam.total_marks or 0))
-
-        assignment_submissions = AssignmentSubmission.objects.filter(
-            assignment__course=course,
-            marks_obtained__isnull=False,
-        ).select_related('assignment')
-        for submission in assignment_submissions:
-            breakdown = grade_breakdowns.get(submission.student_id)
-            if breakdown is not None:
-                breakdown['assignment']['obtained'] += Decimal(str(submission.marks_obtained))
-                breakdown['assignment']['possible'] += Decimal(str(submission.assignment.total_marks or 0))
+        grade_breakdowns = build_assessment_grade_breakdowns(
+            (course.id, enrollment.student_id) for enrollment in enrollments
+        )
 
         results = []
         from utils.grading import calculate_grade
 
         for enrollment in enrollments:
+            grade_breakdown = grade_breakdowns[(course.id, enrollment.student_id)]
             total_obtained = sum(
-                (category['obtained'] for category in grade_breakdowns[enrollment.student_id].values()),
+                (category['obtained'] for category in grade_breakdown.values()),
                 Decimal('0'),
             )
             total_possible = sum(
-                (category['possible'] for category in grade_breakdowns[enrollment.student_id].values()),
+                (category['possible'] for category in grade_breakdown.values()),
                 Decimal('0'),
             )
-            grade_breakdown = {
+            serialized_grade_breakdown = {
                 category: {
                     'obtained': float(values['obtained']),
                     'possible': float(values['possible']),
                 }
-                for category, values in grade_breakdowns[enrollment.student_id].items()
+                for category, values in grade_breakdown.items()
             }
             percentage = (
                 total_obtained / total_possible * Decimal('100')
@@ -1284,7 +1255,7 @@ class TeacherCourseGradesView(APIView):
                 'grade_points': float(grade_info['gpa']),
                 'status': enrollment.status,
                 'result_submitted_to_department': enrollment.result_submitted_to_department,
-                'assessment_grades': grade_breakdown,
+                'assessment_grades': serialized_grade_breakdown,
             })
         
         # Calculate class statistics

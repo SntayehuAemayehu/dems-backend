@@ -2651,7 +2651,7 @@ class SEBEntryView(APIView):
 
             frontend = getattr(django_settings, 'FRONTEND_URL', 'http://localhost:3000').rstrip('/')
             response = redirect(
-                f"{frontend}/login?seb_return=/exams/{exam.id}/start#seb_session={session.id}"
+                f"{frontend}/login?seb_return=/exams/{exam.id}/start&seb_session={session.id}"
             )
             response.set_cookie(
                 'seb_session_id', str(session.id), max_age=300, httponly=True,
