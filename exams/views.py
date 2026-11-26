@@ -2704,8 +2704,14 @@ class SEBLaunchView(APIView):
         if getattr(request.user, 'role', None) != 'STUDENT':
             return Response({'error': 'Only students can launch exams.'}, status=status.HTTP_403_FORBIDDEN)
 
+        if not getattr(django_settings, 'SEB_ENABLED', False):
+            return Response(
+                {'error': 'Safe Exam Browser is disabled.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+
         try:
-            exam = Exam.objects.get(id=exam_id, is_published=True, seb_enabled=True)
+            exam = Exam.objects.get(id=exam_id, is_published=True)
             student = StudentProfile.objects.get(user=request.user)
         except Exam.DoesNotExist:
             return Response({'error': 'Exam is not available via SEB.'}, status=status.HTTP_404_NOT_FOUND)
@@ -2718,6 +2724,10 @@ class SEBLaunchView(APIView):
             status__in=COURSE_ACCESS_ENROLLMENT_STATUSES,
         ).exists():
             return Response({'error': 'You are not enrolled in this course.'}, status=status.HTTP_403_FORBIDDEN)
+
+        if not exam.seb_enabled:
+            exam.seb_enabled = True
+            exam.save(update_fields=['seb_enabled'])
 
         from datetime import timedelta
         session = SEBSession.objects.create(

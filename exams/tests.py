@@ -153,10 +153,8 @@ class StartExamViewTests(TestCase):
         self.assertTrue(session.used)
         self.assertIsNotNone(session.attempt_id)
 
+    @override_settings(SEB_ENABLED=True)
     def test_seb_launch_ticket_authenticates_the_student_once(self):
-        self.exam.seb_enabled = True
-        self.exam.save(update_fields=['seb_enabled'])
-
         launch_response = self.client.post(f'/api/exams/{self.exam.id}/seb-launch/')
         self.assertEqual(launch_response.status_code, 201)
         launch_id = launch_response.data['seb_file_url'].split('launch_id=')[1]
