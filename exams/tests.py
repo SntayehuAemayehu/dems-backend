@@ -179,6 +179,7 @@ class StartExamViewTests(TestCase):
         self.assertEqual(response['Content-Type'], 'text/html; charset=utf-8')
         self.assertNotIn('attachment', response.get('Content-Disposition', ''))
         self.assertIn('href="sebs://', response.content.decode())
+        self.assertIn('window.location.href', response.content.decode())
 
     def test_student_with_completed_enrollment_can_start_exam(self):
         enrollment = Enrollment.objects.get(student=self.student, course=self.course)

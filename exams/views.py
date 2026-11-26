@@ -2864,7 +2864,9 @@ class SEBDownloadView(APIView):
                     '<main><h1>Open this exam in Safe Exam Browser</h1>'
                     '<p>The exam configuration is only provided to Safe Exam Browser. '
                     'Use the button below to open it there.</p>'
-                    '<a href="{}">Open Safe Exam Browser</a></main></body></html>',
+                    '<a id="open-seb" href="{}">Open Safe Exam Browser</a></main>'
+                    '<script>window.location.href = document.getElementById("open-seb").href;</script>'
+                    '</body></html>',
                     launch_url,
                 ),
                 content_type='text/html; charset=utf-8',
