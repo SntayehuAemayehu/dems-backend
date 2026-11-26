@@ -158,9 +158,20 @@ class StartExamViewTests(TestCase):
     def test_seb_launch_signs_student_in_without_password_once(self):
         launch_response = self.client.post(f'/api/exams/{self.exam.id}/seb-launch/')
         self.assertEqual(launch_response.status_code, 201)
+        self.assertIn(
+            f'/api/exams/{self.exam.id}/seb-config.seb?launch_id=',
+            launch_response.data['seb_file_url'],
+        )
         launch_id = launch_response.data['seb_file_url'].split('launch_id=')[1]
 
         unauthenticated_client = APIClient()
+        config_response = unauthenticated_client.get(
+            f'/api/exams/{self.exam.id}/seb-config.seb?launch_id={launch_id}'
+        )
+        self.assertEqual(config_response.status_code, 200)
+        self.assertEqual(config_response['Content-Type'], 'application/seb')
+        self.assertIn('.seb"', config_response['Content-Disposition'])
+
         entry_response = unauthenticated_client.get(
             f'/api/exams/{self.exam.id}/seb-entry/?launch_id={launch_id}'
         )
@@ -655,7 +666,7 @@ class SEBConfigTests(SimpleTestCase):
             serializer = ExamSerializer(context={'request': request})
             url = serializer.get_seb_file_url(exam)
 
-        self.assertEqual(url, 'http://testserver/api/exams/42/seb-config/')
+        self.assertEqual(url, 'http://testserver/api/exams/42/seb-config.seb')
 
     @override_settings(SEB_ENABLED=True)
     def test_seb_download_generates_current_config_and_enables_legacy_exam(self):

@@ -2789,7 +2789,7 @@ class SEBLaunchView(APIView):
             expires_at=timezone.now() + timedelta(minutes=5),
         )
         config_url = request.build_absolute_uri(
-            f'/api/exams/{exam.id}/seb-config/?launch_id={session.id}'
+            f'/api/exams/{exam.id}/seb-config.seb?launch_id={session.id}'
         )
         return Response({'seb_file_url': config_url}, status=status.HTTP_201_CREATED)
 

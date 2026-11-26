@@ -70,7 +70,7 @@ class ExamSerializer(serializers.ModelSerializer):
             return None
 
         request = self.context.get('request')
-        url = f'/api/exams/{obj.id}/seb-config/'
+        url = f'/api/exams/{obj.id}/seb-config.seb'
         if request is not None:
             return request.build_absolute_uri(url)
         return url
