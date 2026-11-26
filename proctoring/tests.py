@@ -1,8 +1,15 @@
+import tempfile
+from unittest.mock import patch
+
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from accounts.models import StudentProfile, User
-from proctoring.views import ReviewStudentsView
+from accounts.models import Department, StudentProfile, User
+from courses.models import Course
+from exams.models import Exam, ExamAttempt
+from proctoring.models import ProctorImage, ProctorLog
+from proctoring.views import ProctorCaptureView, ReviewStudentsView
 
 
 class ReviewStudentsTests(TestCase):
@@ -54,3 +61,78 @@ class ReviewStudentsTests(TestCase):
         response = ReviewStudentsView.as_view()(request)
 
         self.assertEqual(response.status_code, 403)
+
+
+class ProctorCaptureTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email='capture-student@example.test',
+            password='test-password',
+            full_name='Capture Student',
+            role='STUDENT',
+        )
+        self.student = StudentProfile.objects.create(
+            user=self.user,
+            department='Computer Science',
+        )
+        department = Department.objects.create(
+            name='Capture Department',
+            code='CAP',
+        )
+        course = Course.objects.create(
+            course_code='CAP101',
+            title='Capture Course',
+            department=department,
+        )
+        exam = Exam.objects.create(
+            course=course,
+            title='Capture Exam',
+            start_time=timezone.now() - timezone.timedelta(minutes=1),
+            end_time=timezone.now() + timezone.timedelta(hours=1),
+        )
+        self.attempt = ExamAttempt.objects.create(
+            student=self.student,
+            exam=exam,
+            status='SUBMITTED',
+            score=8,
+            total_marks=10,
+        )
+        self.factory = APIRequestFactory()
+
+    @patch('proctoring.views.send_notification')
+    def test_phone_and_multiple_face_captures_are_tagged_without_hiding_results(self, _send_notification):
+        with tempfile.TemporaryDirectory() as media_root:
+            from django.test import override_settings
+
+            with override_settings(MEDIA_ROOT=media_root):
+                for _ in range(2):
+                    request = self.factory.post(
+                        '/api/proctoring/sessions/capture/',
+                        {
+                            'exam_id': self.attempt.id,
+                            'image_data': 'data:image/jpeg;base64,aGVsbG8=',
+                            'metadata': {
+                                'face_detected': True,
+                                'multiple_faces': True,
+                                'mobile_detected': True,
+                                'is_warning': True,
+                                'warning_reason': 'PHONE_DETECTED',
+                            },
+                        },
+                        format='json',
+                    )
+                    force_authenticate(request, user=self.user)
+                    response = ProctorCaptureView.as_view()(request)
+
+                    self.assertEqual(response.status_code, 201)
+
+        image = ProctorImage.objects.filter(attempt=self.attempt).first()
+        self.assertIsNotNone(image)
+        self.assertTrue(image.is_suspicious)
+        self.assertTrue(image.multiple_faces)
+        self.assertTrue(image.mobile_detected)
+        self.assertEqual(
+            ProctorLog.objects.filter(attempt=self.attempt, event_type='PHONE_DETECTED').count(),
+            2,
+        )
+        self.assertEqual(self.attempt.__class__.objects.get(pk=self.attempt.pk).status, 'SUBMITTED')

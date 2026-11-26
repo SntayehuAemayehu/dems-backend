@@ -681,6 +681,11 @@ class ProctorCaptureView(APIView):
             image_data = request.data.get('image_data')
             metadata = request.data.get('metadata', {})
 
+            if not isinstance(metadata, dict):
+                return Response({
+                    'error': 'metadata must be an object'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
             if not exam_id:
                 return Response({
                     'error': 'exam_id is required'
@@ -746,6 +751,8 @@ class ProctorCaptureView(APIView):
                     face_detected=metadata.get('face_detected', True),
                     multiple_faces=metadata.get('multiple_faces', False),
                     mobile_detected=metadata.get('mobile_detected', False),
+                    is_suspicious=metadata.get('is_warning', False),
+                    suspicious_reason=metadata.get('warning_reason', ''),
                     gaze_direction=metadata.get('gaze_direction', 'CENTER'),
                     gaze_confidence=metadata.get('gaze_confidence', 0.0),
                     gaze_x=metadata.get('gaze_x', 0.0),
@@ -754,7 +761,6 @@ class ProctorCaptureView(APIView):
                     head_tilt_y=metadata.get('head_tilt_y', 0.0),
                     eyes_closed=metadata.get('eyes_closed', False),
                     objects_detected=metadata.get('objects_detected', []),
-                    is_suspicious=False
                 )
 
                 # Update session
@@ -769,6 +775,15 @@ class ProctorCaptureView(APIView):
                         attempt=attempt,
                         event_type='MULTIPLE_FACES',
                         details={'message': 'Multiple faces detected'}
+                    )
+                    session.suspicious_events += 1
+
+                if metadata.get('mobile_detected', False):
+                    suspicious_events.append('PHONE_DETECTED')
+                    ProctorLog.objects.create(
+                        attempt=attempt,
+                        event_type='PHONE_DETECTED',
+                        details={'message': 'Mobile phone detected'},
                     )
                     session.suspicious_events += 1
 
@@ -815,9 +830,10 @@ class ProctorCaptureView(APIView):
                     proctor_image.suspicious_reason = f'Auto-flagged: {", ".join(suspicious_events)}'
                     proctor_image.save()
 
-                    # Update attempt status
-                    attempt.status = 'FLAGGED'
-                    attempt.save()
+                    # Preserve submitted results while retaining the review flag.
+                    if attempt.status == 'IN_PROGRESS':
+                        attempt.status = 'FLAGGED'
+                        attempt.save(update_fields=['status'])
 
                     # Send notification
                     send_notification(

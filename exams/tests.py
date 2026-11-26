@@ -124,6 +124,26 @@ class StartExamViewTests(TestCase):
         self.assertEqual(result['course_id'], self.course.id)
         self.assertEqual(result['course_code'], self.course.course_code)
 
+    def test_completed_flagged_attempt_still_appears_in_student_results(self):
+        attempt = ExamAttempt.objects.create(
+            student=self.student,
+            exam=self.exam,
+            status='FLAGGED',
+            score=8,
+            total_marks=10,
+        )
+        ExamAttempt.objects.create(
+            student=self.student,
+            exam=self.exam,
+            status='FLAGGED',
+        )
+
+        response = self.client.get('/api/exams/results/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(attempt.id, [row['id'] for row in response.data])
+        self.assertEqual(len(response.data), 1)
+
     def test_student_with_completed_enrollment_can_start_exam(self):
         enrollment = Enrollment.objects.get(student=self.student, course=self.course)
         enrollment.status = 'COMPLETED'
@@ -485,6 +505,33 @@ class ExamProctorConsumerJoinTests(IsolatedAsyncioTestCase):
         consumer.can_signal_to_staff = AsyncMock(return_value=True)
 
         await consumer.request_student_streams({'requester_id': 34})
+
+        consumer.send.assert_not_awaited()
+
+    async def test_hand_raise_is_forwarded_to_authorized_teacher(self):
+        consumer = ExamProctorConsumer()
+        consumer.user = SimpleNamespace(id=34, role='TEACHER')
+        consumer.send = AsyncMock()
+        consumer.can_view_student = AsyncMock(return_value=True)
+
+        await consumer.student_hand_state({'user_id': 12, 'raised': True})
+
+        consumer.can_view_student.assert_awaited_once_with(12)
+        payload = json.loads(consumer.send.await_args.kwargs['text_data'])
+        self.assertEqual(payload, {'type': 'hand_state', 'user_id': 12, 'raised': True})
+
+    async def test_proctor_alert_is_not_sent_to_unauthorized_teacher(self):
+        consumer = ExamProctorConsumer()
+        consumer.user = SimpleNamespace(id=34, role='TEACHER')
+        consumer.send = AsyncMock()
+        consumer.can_view_student = AsyncMock(return_value=False)
+
+        await consumer.proctor_alert({
+            'student_id': 12,
+            'student_name': 'Student',
+            'event_type': 'PHONE_DETECTED',
+            'message': 'Mobile phone detected',
+        })
 
         consumer.send.assert_not_awaited()
 

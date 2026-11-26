@@ -350,6 +350,7 @@ class ExamProctorConsumer(AsyncWebsocketConsumer):
                     'type': 'user_leave',
                     'user': self.user.full_name,
                     'user_id': self.user.id,
+                    'role': self.user.role,
                 }
             )
             await self.channel_layer.group_discard(
@@ -387,6 +388,73 @@ class ExamProctorConsumer(AsyncWebsocketConsumer):
                     }
                 )
 
+            elif message_type in ['hand_raise', 'hand_lower', 'hand_state']:
+                if self.user.role != 'STUDENT' or not await self.has_active_attempt():
+                    return
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {
+                        'type': 'student_hand_state',
+                        'user_id': self.user.id,
+                        'raised': message_type == 'hand_raise' or (
+                            message_type == 'hand_state' and data.get('raised') is True
+                        ),
+                    }
+                )
+
+            elif message_type == 'proctor_alert':
+                if self.user.role != 'STUDENT' or not await self.has_active_attempt():
+                    return
+                event_type = data.get('event_type')
+                if event_type not in [
+                    'PHONE_DETECTED', 'MULTIPLE_FACES', 'FACE_LOST',
+                    'SPEECH_DETECTED', 'LOUD_NOISE',
+                ]:
+                    return
+                if event_type in ['SPEECH_DETECTED', 'LOUD_NOISE']:
+                    await self.record_student_proctor_event(
+                        event_type,
+                        data.get('message', ''),
+                    )
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {
+                        'type': 'proctor_alert',
+                        'event_type': event_type,
+                        'message': str(data.get('message', ''))[:240],
+                        'student_id': self.user.id,
+                        'student_name': self.user.full_name,
+                    }
+                )
+
+            elif message_type == 'audio_listen_unavailable':
+                if self.user.role != 'STUDENT' or not await self.has_active_attempt():
+                    return
+                if not target_user_id or not await self.can_signal_to_staff(target_user_id):
+                    return
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {
+                        'type': 'audio_listen_unavailable',
+                        'target_user_id': str(target_user_id),
+                        'student_name': self.user.full_name,
+                    }
+                )
+
+            elif message_type == 'teacher_note':
+                if self.user.role != 'TEACHER' or not target_user_id:
+                    return
+                if not await self.can_view_student(target_user_id):
+                    return
+                note = str(data.get('message', '')).strip()[:500]
+                if not note:
+                    return
+                await self.record_teacher_note(target_user_id, note)
+                await self.send(text_data=json.dumps({
+                    'type': 'teacher_note_saved',
+                    'target_user_id': str(target_user_id),
+                }))
+
             elif message_type == 'request_streams':
                 if self.user.role not in ['TEACHER', 'ADMIN'] or not await self.can_access_exam():
                     return
@@ -399,7 +467,10 @@ class ExamProctorConsumer(AsyncWebsocketConsumer):
                 )
 
             # ========== Teacher control messages ==========
-            elif message_type in ['warning', 'force_submit', 'pause_exam', 'resume_exam', 'add_time', 'chat']:
+            elif message_type in [
+                'warning', 'force_submit', 'pause_exam', 'resume_exam',
+                'add_time', 'chat', 'audio_listen_request', 'audio_listen_stop',
+            ]:
                 if self.user.role != 'TEACHER' or not target_user_id:
                     return
                 if not await self.can_view_student(target_user_id):
@@ -414,7 +485,9 @@ class ExamProctorConsumer(AsyncWebsocketConsumer):
                     if not end_time:
                         return
                     data['end_time'] = end_time
-                elif not await self.is_exam_owner() and message_type not in ['warning', 'chat']:
+                elif not await self.is_exam_owner() and message_type not in [
+                    'warning', 'chat', 'audio_listen_request', 'audio_listen_stop',
+                ]:
                     return
 
                 await self.channel_layer.group_send(
@@ -474,6 +547,34 @@ class ExamProctorConsumer(AsyncWebsocketConsumer):
             'sender_id': event['sender_id'],
         }))
 
+    async def student_hand_state(self, event):
+        if self.user.role == 'STUDENT' or not await self.can_view_student(event['user_id']):
+            return
+        await self.send(text_data=json.dumps({
+            'type': 'hand_state',
+            'user_id': event['user_id'],
+            'raised': event['raised'],
+        }))
+
+    async def proctor_alert(self, event):
+        if self.user.role == 'STUDENT' or not await self.can_view_student(event['student_id']):
+            return
+        await self.send(text_data=json.dumps({
+            'type': 'proctor_alert',
+            'event_type': event['event_type'],
+            'message': event['message'],
+            'student_id': event['student_id'],
+            'student_name': event['student_name'],
+        }))
+
+    async def audio_listen_unavailable(self, event):
+        if str(event['target_user_id']) != str(self.user.id):
+            return
+        await self.send(text_data=json.dumps({
+            'type': 'audio_listen_unavailable',
+            'student_name': event['student_name'],
+        }))
+
     async def exam_update(self, event):
         if self.user.role == 'STUDENT':
             if not await self.has_active_attempt():
@@ -521,6 +622,7 @@ class ExamProctorConsumer(AsyncWebsocketConsumer):
             'type': 'user_leave',
             'user': event['user'],
             'user_id': event.get('user_id'),
+            'role': event.get('role'),
         }))
 
     @database_sync_to_async
@@ -629,3 +731,41 @@ class ExamProctorConsumer(AsyncWebsocketConsumer):
         attempt.end_time = (attempt.end_time or timezone.now()) + timezone.timedelta(minutes=minutes)
         attempt.save(update_fields=['end_time'])
         return attempt.end_time.isoformat()
+
+    @database_sync_to_async
+    def record_student_proctor_event(self, event_type, message):
+        from .models import ExamAttempt
+        from proctoring.models import ProctorLog
+
+        attempt = ExamAttempt.objects.filter(
+            exam_id=self.exam_id,
+            student__user=self.user,
+            status='IN_PROGRESS',
+        ).first()
+        if attempt:
+            ProctorLog.objects.create(
+                attempt=attempt,
+                event_type=event_type,
+                details={'message': str(message)[:240]},
+            )
+
+    @database_sync_to_async
+    def record_teacher_note(self, student_user_id, message):
+        from .models import ExamAttempt
+        from proctoring.models import ProctorLog
+
+        attempt = ExamAttempt.objects.filter(
+            exam_id=self.exam_id,
+            student__user_id=student_user_id,
+            status='IN_PROGRESS',
+        ).first()
+        if attempt:
+            ProctorLog.objects.create(
+                attempt=attempt,
+                event_type='TEACHER_NOTE',
+                details={
+                    'message': message,
+                    'teacher_id': self.user.id,
+                    'teacher_name': self.user.full_name,
+                },
+            )

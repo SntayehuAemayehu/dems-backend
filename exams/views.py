@@ -512,20 +512,20 @@ class ExamResultsView(generics.ListAPIView):
     
     def get_queryset(self):
         user = self.request.user
+        completed_attempt = Q(status__in=['SUBMITTED', 'GRADED']) | Q(
+            status='FLAGGED',
+            score__isnull=False,
+        )
         if user.role == 'STUDENT':
             return ExamAttempt.objects.filter(
-                student__user=user, 
-                status__in=['SUBMITTED', 'GRADED']
-            ).select_related('exam', 'student__user')
+                student__user=user,
+            ).filter(completed_attempt).select_related('exam', 'student__user')
         elif user.role == 'TEACHER':
             return ExamAttempt.objects.filter(
-                exam__course__instructor=user, 
-                status__in=['SUBMITTED', 'GRADED']
-            ).select_related('exam', 'student__user')
+                exam__course__instructor=user,
+            ).filter(completed_attempt).select_related('exam', 'student__user')
         else:
-            return ExamAttempt.objects.filter(
-                status__in=['SUBMITTED', 'GRADED']
-            ).select_related('exam', 'student__user')
+            return ExamAttempt.objects.filter(completed_attempt).select_related('exam', 'student__user')
     
     def list(self, request, *args, **kwargs):
         queryset = self.get_queryset()
