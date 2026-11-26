@@ -155,7 +155,7 @@ class StartExamViewTests(TestCase):
         self.assertIsNotNone(session.attempt_id)
 
     @override_settings(SEB_ENABLED=True, FRONTEND_URL='https://dems-frontend.onrender.com')
-    def test_seb_launch_requires_manual_student_login(self):
+    def test_seb_launch_signs_student_in_without_password_once(self):
         launch_response = self.client.post(f'/api/exams/{self.exam.id}/seb-launch/')
         self.assertEqual(launch_response.status_code, 201)
         launch_id = launch_response.data['seb_file_url'].split('launch_id=')[1]
@@ -169,6 +169,25 @@ class StartExamViewTests(TestCase):
             entry_response['Location'],
             f'https://dems-frontend.onrender.com/login?seb_return=/exams/{self.exam.id}/start#seb_session={launch_id}',
         )
+
+        login_response = unauthenticated_client.post(
+            f'/api/exams/{self.exam.id}/seb-login/',
+            {'launch_id': launch_id},
+            format='json',
+        )
+        self.assertEqual(login_response.status_code, 200)
+        self.assertEqual(login_response.data['user']['id'], self.user.id)
+        self.assertTrue(login_response.data['access'])
+        self.assertTrue(login_response.data['refresh'])
+
+        session = SEBSession.objects.get(id=launch_id)
+        self.assertTrue(session.login_used)
+        reused_login_response = unauthenticated_client.post(
+            f'/api/exams/{self.exam.id}/seb-login/',
+            {'launch_id': launch_id},
+            format='json',
+        )
+        self.assertEqual(reused_login_response.status_code, 403)
 
         response = self.client.post(
             f'/api/exams/{self.exam.id}/start/',

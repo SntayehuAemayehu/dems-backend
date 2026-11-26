@@ -26,6 +26,8 @@ import secrets
 from django.shortcuts import redirect
 from django.urls import reverse
 from django.conf import settings as django_settings
+from rest_framework_simplejwt.tokens import RefreshToken
+from accounts.serializers import UserSerializer
 from .seb_service import (
     generate_and_save,
     generate_seb_file,
@@ -2691,6 +2693,61 @@ class SEBEntryView(APIView):
             secure=not django_settings.DEBUG, samesite='Lax', path='/',
         )
         return response
+
+
+class SEBLoginView(APIView):
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+
+    def post(self, request, exam_id):
+        launch_id = request.data.get('launch_id')
+        try:
+            with transaction.atomic():
+                session = (
+                    SEBSession.objects.select_for_update()
+                    .select_related('student__user', 'exam')
+                    .get(id=launch_id, exam_id=exam_id)
+                )
+                if (
+                    not session.is_valid()
+                    or session.login_used
+                    or not session.exam.is_published
+                    or not session.exam.seb_enabled
+                ):
+                    return Response(
+                        {'error': 'SEB login ticket is invalid or expired. Please reopen the exam.'},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+
+                user = session.student.user
+                if not user.is_active or user.role != 'STUDENT':
+                    return Response(
+                        {'error': 'This student account cannot sign in to the exam.'},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+                if not Enrollment.objects.filter(
+                    student=session.student,
+                    course=session.exam.course,
+                    status__in=COURSE_ACCESS_ENROLLMENT_STATUSES,
+                ).exists():
+                    return Response(
+                        {'error': 'You are not enrolled in this course.'},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+
+                session.login_used = True
+                session.save(update_fields=['login_used'])
+                refresh = RefreshToken.for_user(user)
+                return Response({
+                    'user': UserSerializer(user).data,
+                    'refresh': str(refresh),
+                    'access': str(refresh.access_token),
+                })
+        except (SEBSession.DoesNotExist, ValueError, TypeError):
+            return Response(
+                {'error': 'SEB login ticket is invalid or expired. Please reopen the exam.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
 
 class SEBLaunchView(APIView):
