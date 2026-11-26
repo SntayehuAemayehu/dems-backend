@@ -32,6 +32,8 @@ from .seb_service import (
     verify_config_key_hash,
 )
 from .models import SEBSession  # add SEBSession to existing model import
+from accounts.serializers import UserSerializer
+from rest_framework_simplejwt.tokens import RefreshToken
 
 
 def _can_manage_exam(exam, user):
@@ -357,27 +359,6 @@ class StartExamView(APIView):
         if not exam.is_published:
             return Response({'error': 'Exam is not published'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ✅ TEMPORARILY DISABLED FOR HOMEPAGE FLOW TESTING
-        # if exam.seb_enabled:
-        #     session_id = request.COOKIES.get('seb_session_id')
-        #     if not session_id:
-        #         return Response(
-        #             {'error': 'This exam requires Safe Exam Browser. Please open the .seb file.'},
-        #             status=status.HTTP_403_FORBIDDEN
-        #         )
-        #     try:
-        #         seb_session = SEBSession.objects.get(id=session_id, exam=exam)
-        #     except (SEBSession.DoesNotExist, ValueError):
-        #         return Response(
-        #             {'error': 'Invalid SEB session. Please reopen the .seb file.'},
-        #             status=status.HTTP_403_FORBIDDEN
-        #         )
-        #     if not seb_session.is_valid():
-        #         return Response(
-        #             {'error': 'SEB session expired. Please reopen the .seb file.'},
-        #             status=status.HTTP_403_FORBIDDEN
-        #         )
-
         now = timezone.now()
         if now < exam.start_time:
             return Response({'error': 'Exam has not started yet'}, status=status.HTTP_400_BAD_REQUEST)
@@ -389,13 +370,25 @@ class StartExamView(APIView):
         except StudentProfile.DoesNotExist:
             return Response({'error': 'Student profile not found'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ✅ TEMPORARILY DISABLED FOR HOMEPAGE FLOW TESTING
-        # if exam.seb_enabled:
-        #     if seb_session.student_id != student.id:
-        #         return Response(
-        #             {'error': 'SEB session does not belong to this student.'},
-        #             status=status.HTTP_403_FORBIDDEN
-        #         )
+        seb_session = None
+        if exam.seb_enabled:
+            session_id = request.COOKIES.get('seb_session_id') or request.data.get('seb_session_id')
+            try:
+                seb_session = SEBSession.objects.get(id=session_id, exam=exam)
+            except (SEBSession.DoesNotExist, ValueError, TypeError):
+                return Response(
+                    {'error': 'Open this exam with Safe Exam Browser before starting.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            if (
+                not seb_session.is_valid()
+                or not seb_session.login_used
+                or seb_session.student_id != student.id
+            ):
+                return Response(
+                    {'error': 'Safe Exam Browser session is invalid or expired. Please reopen the exam.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
 
         if not Enrollment.objects.filter(
             student=student,
@@ -418,11 +411,10 @@ class StartExamView(APIView):
             end_time=timezone.now() + timezone.timedelta(minutes=exam.duration_minutes)
         )
 
-        # ✅ TEMPORARILY DISABLED FOR HOMEPAGE FLOW TESTING
-        # if exam.seb_enabled:
-        #     seb_session.used = True
-        #     seb_session.attempt = attempt
-        #     seb_session.save(update_fields=['used', 'attempt'])
+        if seb_session:
+            seb_session.used = True
+            seb_session.attempt = attempt
+            seb_session.save(update_fields=['used', 'attempt'])
 
         response = Response({
             'attempt_id': attempt.id,
@@ -430,8 +422,8 @@ class StartExamView(APIView):
             'duration_minutes': exam.duration_minutes,
             'end_time': attempt.end_time
         })
-        # Clear the cookie (single-use)
-        # response.delete_cookie('seb_session_id', path=f'/api/exams/{exam.id}/')
+        if seb_session:
+            response.delete_cookie('seb_session_id', path='/')
         return response
 
 
@@ -2649,6 +2641,25 @@ class SEBEntryView(APIView):
         except Exam.DoesNotExist:
             return Response({'error': 'Exam not available via SEB'}, status=status.HTTP_404_NOT_FOUND)
 
+        launch_id = request.query_params.get('launch_id')
+        if launch_id:
+            try:
+                session = SEBSession.objects.get(id=launch_id, exam=exam)
+            except (SEBSession.DoesNotExist, ValueError):
+                return Response({'error': 'Invalid SEB launch. Please reopen the exam.'}, status=status.HTTP_403_FORBIDDEN)
+            if not session.is_valid() or session.login_used:
+                return Response({'error': 'SEB launch expired. Please reopen the exam.'}, status=status.HTTP_403_FORBIDDEN)
+
+            frontend = getattr(django_settings, 'FRONTEND_URL', 'http://localhost:3000').rstrip('/')
+            response = redirect(
+                f"{frontend}/login?seb_return=/exams/{exam.id}/start#seb_ticket={session.id}"
+            )
+            response.set_cookie(
+                'seb_session_id', str(session.id), max_age=300, httponly=True,
+                secure=not django_settings.DEBUG, samesite='Lax', path='/',
+            )
+            return response
+
         received_hash = request.headers.get('X-SafeExamBrowser-ConfigKeyHash', '')
         absolute_url = request.build_absolute_uri()
 
@@ -2674,6 +2685,7 @@ class SEBEntryView(APIView):
             student=student,
             exam=exam,
             expires_at=timezone.now() + timedelta(seconds=120),
+            login_used=True,
         )
 
         frontend = getattr(django_settings, 'FRONTEND_URL', 'http://localhost:3000').rstrip('/')
@@ -2683,6 +2695,74 @@ class SEBEntryView(APIView):
             secure=not django_settings.DEBUG, samesite='Lax', path='/',
         )
         return response
+
+
+class SEBLaunchView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, exam_id):
+        if getattr(request.user, 'role', None) != 'STUDENT':
+            return Response({'error': 'Only students can launch exams.'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            exam = Exam.objects.get(id=exam_id, is_published=True, seb_enabled=True)
+            student = StudentProfile.objects.get(user=request.user)
+        except Exam.DoesNotExist:
+            return Response({'error': 'Exam is not available via SEB.'}, status=status.HTTP_404_NOT_FOUND)
+        except StudentProfile.DoesNotExist:
+            return Response({'error': 'Student profile not found.'}, status=status.HTTP_403_FORBIDDEN)
+
+        if not Enrollment.objects.filter(
+            student=student,
+            course=exam.course,
+            status__in=COURSE_ACCESS_ENROLLMENT_STATUSES,
+        ).exists():
+            return Response({'error': 'You are not enrolled in this course.'}, status=status.HTTP_403_FORBIDDEN)
+
+        from datetime import timedelta
+        session = SEBSession.objects.create(
+            student=student,
+            exam=exam,
+            expires_at=timezone.now() + timedelta(minutes=5),
+        )
+        config_url = request.build_absolute_uri(
+            f'/api/exams/{exam.id}/seb-config/?launch_id={session.id}'
+        )
+        return Response({'seb_file_url': config_url}, status=status.HTTP_201_CREATED)
+
+
+class SEBLoginView(APIView):
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        launch_id = request.data.get('launch_id')
+        if not launch_id:
+            return Response({'error': 'SEB launch ticket is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            try:
+                session = SEBSession.objects.select_for_update().select_related(
+                    'student__user', 'exam'
+                ).get(id=launch_id, exam__is_published=True, exam__seb_enabled=True)
+            except (SEBSession.DoesNotExist, ValueError):
+                return Response({'error': 'SEB launch ticket is invalid.'}, status=status.HTTP_403_FORBIDDEN)
+
+            if not session.is_valid() or session.login_used:
+                return Response({'error': 'SEB launch ticket expired or already used.'}, status=status.HTTP_403_FORBIDDEN)
+
+            session.login_used = True
+            session.save(update_fields=['login_used'])
+
+        user = session.student.user
+        refresh = RefreshToken.for_user(user)
+        return Response({
+            'user': UserSerializer(user, context={'request': request}).data,
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
+        })
+
+
 class SEBDownloadView(APIView):
     permission_classes = []
     authentication_classes = []
@@ -2696,8 +2776,17 @@ class SEBDownloadView(APIView):
         except Exam.DoesNotExist:
             return Response({'error': 'SEB config not available'}, status=status.HTTP_404_NOT_FOUND)
 
+        launch_id = request.query_params.get('launch_id')
+        if launch_id:
+            try:
+                launch = SEBSession.objects.get(id=launch_id, exam=exam)
+            except (SEBSession.DoesNotExist, ValueError):
+                return Response({'error': 'Invalid SEB launch ticket.'}, status=status.HTTP_403_FORBIDDEN)
+            if not launch.is_valid() or launch.login_used:
+                return Response({'error': 'SEB launch ticket expired. Please reopen the exam.'}, status=status.HTTP_403_FORBIDDEN)
+
         try:
-            config_key, file_bytes = generate_seb_file(exam)
+            config_key, file_bytes = generate_seb_file(exam, launch_id=launch_id)
         except Exception as e:
             logger.error(f"Failed to generate SEB config for exam {exam.id}: {e}")
             return Response({'error': 'Could not generate SEB file'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

@@ -39,12 +39,14 @@ def _url_filter_rule(url):
         "action": 1,
     }
 
-def build_seb_config(exam):
+def build_seb_config(exam, launch_id=None):
     base = (settings.SEB_BASE_URL or settings.BACKEND_URL).rstrip('/')
     frontend = settings.FRONTEND_URL.rstrip('/')
     
     # ✅ Point to backend entry endpoint
     entry_url = f"{base}/api/exams/{exam.id}/seb-entry/"
+    if launch_id:
+        entry_url = f"{entry_url}?launch_id={launch_id}"
 
     config = {
         "startURL": entry_url,
@@ -66,6 +68,8 @@ def build_seb_config(exam):
         "URLFilterRules": [
             _url_filter_rule(base),
             _url_filter_rule(frontend),
+            _url_filter_rule("https://cdn.jsdelivr.net"),
+            _url_filter_rule("https://storage.googleapis.com"),
         ],
         "examSessionClearCookiesOnStart": True,
         "examSessionClearCookiesOnEnd": True,
@@ -73,8 +77,8 @@ def build_seb_config(exam):
     }
     return config
 
-def generate_seb_file(exam):
-    config = build_seb_config(exam)
+def generate_seb_file(exam, launch_id=None):
+    config = build_seb_config(exam, launch_id=launch_id)
     config_key = generate_config_key(config)
     buffer = BytesIO()
     plistlib.dump(config, buffer, fmt=plistlib.FMT_XML)

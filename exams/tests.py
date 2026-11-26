@@ -10,7 +10,7 @@ from rest_framework.test import APIClient, APIRequestFactory
 
 from accounts.models import Department, StudentProfile, TeacherProfile, User
 from courses.models import Course, Enrollment
-from exams.models import Exam, ExamAttempt, ExaminerAssignment, Question
+from exams.models import Exam, ExamAttempt, ExaminerAssignment, Question, SEBSession
 from exams.serializers import ExamSerializer
 from exams.seb_service import build_seb_config
 from exams.views import SEBDownloadView
@@ -131,6 +131,52 @@ class StartExamViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('attempt_id', response.data)
+
+    def test_seb_exam_requires_a_session_bound_to_the_student(self):
+        self.exam.seb_enabled = True
+        self.exam.save(update_fields=['seb_enabled'])
+
+        response = self.client.post(f'/api/exams/{self.exam.id}/start/')
+        self.assertEqual(response.status_code, 403)
+
+        session = SEBSession.objects.create(
+            student=self.student,
+            exam=self.exam,
+            expires_at=timezone.now() + timezone.timedelta(minutes=5),
+            login_used=True,
+        )
+        self.client.cookies['seb_session_id'] = str(session.id)
+        response = self.client.post(f'/api/exams/{self.exam.id}/start/')
+
+        self.assertEqual(response.status_code, 200)
+        session.refresh_from_db()
+        self.assertTrue(session.used)
+        self.assertIsNotNone(session.attempt_id)
+
+    def test_seb_launch_ticket_authenticates_the_student_once(self):
+        self.exam.seb_enabled = True
+        self.exam.save(update_fields=['seb_enabled'])
+
+        launch_response = self.client.post(f'/api/exams/{self.exam.id}/seb-launch/')
+        self.assertEqual(launch_response.status_code, 201)
+        launch_id = launch_response.data['seb_file_url'].split('launch_id=')[1]
+
+        unauthenticated_client = APIClient()
+        login_response = unauthenticated_client.post(
+            '/api/exams/seb-login/',
+            {'launch_id': launch_id},
+            format='json',
+        )
+        self.assertEqual(login_response.status_code, 200)
+        self.assertEqual(login_response.data['user']['id'], self.user.id)
+        self.assertIn('access', login_response.data)
+
+        reused_response = unauthenticated_client.post(
+            '/api/exams/seb-login/',
+            {'launch_id': launch_id},
+            format='json',
+        )
+        self.assertEqual(reused_response.status_code, 403)
 
     def test_live_monitoring_returns_user_id_for_matching_web_rtc_stream(self):
         ExamAttempt.objects.create(
@@ -520,7 +566,7 @@ class SEBConfigTests(SimpleTestCase):
         for rule in rules:
             re.compile(rule['expression'])
 
-        self.assertEqual(len(rules), 2)
+        self.assertEqual(len(rules), 4)
         self.assertTrue(all(rule['action'] == 1 for rule in rules))
         self.assertRegex(
             'https://dems-backend-0dxk.onrender.com/api/exams/42/seb-entry/',
@@ -529,6 +575,14 @@ class SEBConfigTests(SimpleTestCase):
         self.assertRegex(
             'https://dems-frontend.onrender.com/exams/42/start',
             rules[1]['expression'],
+        )
+        self.assertRegex(
+            'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm/vision_wasm_internal.js',
+            rules[2]['expression'],
+        )
+        self.assertRegex(
+            'https://storage.googleapis.com/tfjs-models/savedmodel/ssdlite/model.json',
+            rules[3]['expression'],
         )
 
     @override_settings(
@@ -543,6 +597,19 @@ class SEBConfigTests(SimpleTestCase):
             config['startURL'],
             'https://dems-backend-0dxk.onrender.com/api/exams/42/seb-entry/',
         )
+
+    @override_settings(
+        SEB_BASE_URL='https://dems-backend-0dxk.onrender.com',
+        FRONTEND_URL='https://dems-frontend.onrender.com',
+    )
+    def test_config_uses_launch_ticket_for_seamless_student_sign_in(self):
+        config = build_seb_config(SimpleNamespace(id=42), launch_id='launch-token')
+
+        self.assertEqual(
+            config['startURL'],
+            'https://dems-backend-0dxk.onrender.com/api/exams/42/seb-entry/?launch_id=launch-token',
+        )
+
 
     def test_existing_exam_launch_url_uses_config_endpoint(self):
         request = APIRequestFactory().get('/api/exams/42/')

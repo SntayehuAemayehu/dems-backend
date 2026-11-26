@@ -195,6 +195,7 @@ class SEBSession(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
     used = models.BooleanField(default=False)
+    login_used = models.BooleanField(default=False)
     ip_hash = models.CharField(max_length=64, blank=True)
 
     class Meta:
