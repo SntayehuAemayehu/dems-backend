@@ -32,8 +32,6 @@ from .seb_service import (
     verify_config_key_hash,
 )
 from .models import SEBSession  # add SEBSession to existing model import
-from accounts.serializers import UserSerializer
-from rest_framework_simplejwt.tokens import RefreshToken
 
 
 def _can_manage_exam(exam, user):
@@ -382,7 +380,6 @@ class StartExamView(APIView):
                 )
             if (
                 not seb_session.is_valid()
-                or not seb_session.login_used
                 or seb_session.student_id != student.id
             ):
                 return Response(
@@ -2647,12 +2644,12 @@ class SEBEntryView(APIView):
                 session = SEBSession.objects.get(id=launch_id, exam=exam)
             except (SEBSession.DoesNotExist, ValueError):
                 return Response({'error': 'Invalid SEB launch. Please reopen the exam.'}, status=status.HTTP_403_FORBIDDEN)
-            if not session.is_valid() or session.login_used:
+            if not session.is_valid():
                 return Response({'error': 'SEB launch expired. Please reopen the exam.'}, status=status.HTTP_403_FORBIDDEN)
 
             frontend = getattr(django_settings, 'FRONTEND_URL', 'http://localhost:3000').rstrip('/')
             response = redirect(
-                f"{frontend}/login?seb_return=/exams/{exam.id}/start#seb_ticket={session.id}"
+                f"{frontend}/login?seb_return=/exams/{exam.id}/start#seb_session={session.id}"
             )
             response.set_cookie(
                 'seb_session_id', str(session.id), max_age=300, httponly=True,
@@ -2685,7 +2682,6 @@ class SEBEntryView(APIView):
             student=student,
             exam=exam,
             expires_at=timezone.now() + timedelta(seconds=120),
-            login_used=True,
         )
 
         frontend = getattr(django_settings, 'FRONTEND_URL', 'http://localhost:3000').rstrip('/')
@@ -2741,38 +2737,6 @@ class SEBLaunchView(APIView):
         return Response({'seb_file_url': config_url}, status=status.HTTP_201_CREATED)
 
 
-class SEBLoginView(APIView):
-    permission_classes = [permissions.AllowAny]
-    authentication_classes = []
-
-    def post(self, request):
-        launch_id = request.data.get('launch_id')
-        if not launch_id:
-            return Response({'error': 'SEB launch ticket is required.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        with transaction.atomic():
-            try:
-                session = SEBSession.objects.select_for_update().select_related(
-                    'student__user', 'exam'
-                ).get(id=launch_id, exam__is_published=True, exam__seb_enabled=True)
-            except (SEBSession.DoesNotExist, ValueError):
-                return Response({'error': 'SEB launch ticket is invalid.'}, status=status.HTTP_403_FORBIDDEN)
-
-            if not session.is_valid() or session.login_used:
-                return Response({'error': 'SEB launch ticket expired or already used.'}, status=status.HTTP_403_FORBIDDEN)
-
-            session.login_used = True
-            session.save(update_fields=['login_used'])
-
-        user = session.student.user
-        refresh = RefreshToken.for_user(user)
-        return Response({
-            'user': UserSerializer(user, context={'request': request}).data,
-            'access': str(refresh.access_token),
-            'refresh': str(refresh),
-        })
-
-
 class SEBDownloadView(APIView):
     permission_classes = []
     authentication_classes = []
@@ -2792,7 +2756,7 @@ class SEBDownloadView(APIView):
                 launch = SEBSession.objects.get(id=launch_id, exam=exam)
             except (SEBSession.DoesNotExist, ValueError):
                 return Response({'error': 'Invalid SEB launch ticket.'}, status=status.HTTP_403_FORBIDDEN)
-            if not launch.is_valid() or launch.login_used:
+            if not launch.is_valid():
                 return Response({'error': 'SEB launch ticket expired. Please reopen the exam.'}, status=status.HTTP_403_FORBIDDEN)
 
         try:

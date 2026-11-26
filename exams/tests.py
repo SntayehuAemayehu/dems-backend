@@ -145,7 +145,6 @@ class StartExamViewTests(TestCase):
             student=self.student,
             exam=self.exam,
             expires_at=timezone.now() + timezone.timedelta(minutes=5),
-            login_used=True,
         )
         self.client.cookies['seb_session_id'] = str(session.id)
         response = self.client.post(f'/api/exams/{self.exam.id}/start/')
@@ -155,28 +154,28 @@ class StartExamViewTests(TestCase):
         self.assertTrue(session.used)
         self.assertIsNotNone(session.attempt_id)
 
-    @override_settings(SEB_ENABLED=True)
-    def test_seb_launch_ticket_authenticates_the_student_once(self):
+    @override_settings(SEB_ENABLED=True, FRONTEND_URL='https://dems-frontend.onrender.com')
+    def test_seb_launch_requires_manual_student_login(self):
         launch_response = self.client.post(f'/api/exams/{self.exam.id}/seb-launch/')
         self.assertEqual(launch_response.status_code, 201)
         launch_id = launch_response.data['seb_file_url'].split('launch_id=')[1]
 
         unauthenticated_client = APIClient()
-        login_response = unauthenticated_client.post(
-            '/api/exams/seb-login/',
-            {'launch_id': launch_id},
-            format='json',
+        entry_response = unauthenticated_client.get(
+            f'/api/exams/{self.exam.id}/seb-entry/?launch_id={launch_id}'
         )
-        self.assertEqual(login_response.status_code, 200)
-        self.assertEqual(login_response.data['user']['id'], self.user.id)
-        self.assertIn('access', login_response.data)
+        self.assertEqual(entry_response.status_code, 302)
+        self.assertEqual(
+            entry_response['Location'],
+            f'https://dems-frontend.onrender.com/login?seb_return=/exams/{self.exam.id}/start#seb_session={launch_id}',
+        )
 
-        reused_response = unauthenticated_client.post(
-            '/api/exams/seb-login/',
-            {'launch_id': launch_id},
+        response = self.client.post(
+            f'/api/exams/{self.exam.id}/start/',
+            {'seb_session_id': launch_id},
             format='json',
         )
-        self.assertEqual(reused_response.status_code, 403)
+        self.assertEqual(response.status_code, 200)
 
     def test_live_monitoring_returns_user_id_for_matching_web_rtc_stream(self):
         ExamAttempt.objects.create(
