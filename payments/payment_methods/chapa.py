@@ -30,7 +30,7 @@ class ChapaMethod(BasePaymentMethod):
         self.base_url = getattr(settings, 'CHAPA_BASE_URL', 'https://api.chapa.co/v1')
 
         # Frontend/backend URLs (add these to settings!)
-        self.backend_url = getattr(settings, 'BACKEND_URL', settings.BASE_URL)
+        self.backend_url = getattr(settings, 'BACKEND_URL', None) or getattr(settings, 'BASE_URL', 'http://localhost:8000')
         self.frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')
 
     # ================================================================
@@ -54,8 +54,7 @@ class ChapaMethod(BasePaymentMethod):
         name_parts = student_name.split()
         first_name = name_parts[0] if name_parts else 'Student'
         last_name = name_parts[1] if len(name_parts) > 1 else first_name
-# Add this line in chapa.py right before payload = {
-        print("🔍 URL SENT TO CHAPA:", f"{self.backend_url}/api/payments/webhook/chapa/")
+
         payload = {
             "amount": str(amount),
             "currency": "ETB",

@@ -38,15 +38,9 @@ import json
 logger = logging.getLogger(__name__)
 
 def payment_submission_block_reason(student):
-    """Return why another proof cannot be submitted, or None when eligible."""
+    """Allow repeated payments; only block while one proof is still pending."""
     if PaymentProof.objects.filter(student=student, status='PENDING').exists():
         return 'A payment proof is already pending verification.'
-
-    if student.payment_status == 'VERIFIED' or PaymentProof.objects.filter(
-        student=student,
-        status='VERIFIED',
-    ).exists():
-        return 'Your payment has been verified. New payment submission is unavailable.'
 
     return None
 
