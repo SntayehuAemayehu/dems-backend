@@ -2,14 +2,17 @@
 
 from .bank_transfer import BankTransferMethod
 from .telebirr import TelebirrMethod
+from .chapa import ChapaMethod
+
+
 def get_all_payment_methods():
     """Get all registered payment methods"""
     return [
         BankTransferMethod(),
         TelebirrMethod(),
         ChapaMethod(),
-
     ]
+
 
 def get_payment_method(method_id):
     """Get a specific payment method by ID"""
@@ -18,11 +21,12 @@ def get_payment_method(method_id):
             return method
     return None
 
+
 # Export all methods
 __all__ = [
     'BankTransferMethod',
     'TelebirrMethod',
     'ChapaMethod',
     'get_all_payment_methods',
-    'get_payment_method'
+    'get_payment_method',
 ]
